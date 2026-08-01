@@ -71,6 +71,10 @@ text. If the model is unavailable, the app clearly shows the most relevant
 verbatim passages instead of presenting them as a generated answer. If local
 search finds no evidence, the workflow stops without asking the model to guess.
 
+To reproduce the documented example, import the bundled
+[sample video-game PDF](SampleDocuments/ExampleVideoGamePDF.pdf) and ask:
+*How much damage do Ghosts deal, and how much HP do they have?*
+
 This first demo intentionally favors a small, inspectable implementation over a
 full RAG stack. It supports PDFs up to 20 MB, 250 pages, 1.5 million extracted
 characters, and 1,500 passages. Password-protected files and image-only scans

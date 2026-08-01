@@ -30,6 +30,58 @@ The application remains in control of:
 This supports fully offline apps as well as hybrid workflows that begin
 on-device and escalate only when necessary.
 
+## Examples
+
+The included **SwiftOrc Demo** shows complete, user-facing workflows rather
+than isolated model calls. Each example uses Apple's on-device model for a
+focused task while ordinary Swift owns routing, validation, safety rules, and
+fallback behavior.
+
+### Pantry Rescue
+
+Turn a mock pantry, dietary requirements, available equipment, and a time limit
+into a checked meal plan. The model proposes a structured recipe; Swift verifies
+that it uses the selected ingredients, respects the allergy and equipment rules,
+fits the time limit, and either approves it, requests a bounded revision, or
+uses a deterministic fallback. Pantry data never leaves the device.
+
+<p align="center">
+  <img src="Documentation/Images/Examples/pantry-rescue-inventory.png" alt="Pantry Rescue ingredient selection" width="30%">
+  <img src="Documentation/Images/Examples/pantry-rescue-preferences.png" alt="Pantry Rescue meal preferences and boundaries" width="30%">
+  <img src="Documentation/Images/Examples/pantry-rescue-result.png" alt="Pantry Rescue checked meal result" width="30%">
+</p>
+
+### Support Desk
+
+Convert bundled mock ticket, account, and knowledge-base data into a grounded
+reply for an agent to review. The model writes only the draft; application code
+owns triage and checks grounding, prohibited claims, sensitive actions, and
+reply quality. The demo never sends a message or changes an account.
+
+<p align="center">
+  <img src="Documentation/Images/Examples/support-desk-queue.png" alt="Support Desk ticket queue" width="45%">
+  <img src="Documentation/Images/Examples/support-desk-draft.png" alt="Support Desk grounded draft awaiting agent review" width="45%">
+</p>
+
+### PDF Knowledge
+
+Choose a searchable PDF and ask questions whose answers must stay grounded in
+that document. The app performs bounded PDFKit extraction and local retrieval,
+sends only matching passages to the on-device model, and attaches page-aware
+sources in Swift. The PDF is not uploaded, and the workflow stops rather than
+guessing when it cannot find sufficient evidence.
+
+<p align="center">
+  <img src="Documentation/Images/Examples/pdf-knowledge-question.png" alt="A question grounded in a selected PDF" width="45%">
+  <img src="Documentation/Images/Examples/pdf-knowledge-answer.png" alt="A PDF-grounded answer with its source passage" width="45%">
+</p>
+
+Reproduce the screenshots with the
+[sample video-game PDF](Examples/SwiftOrcDemo/SampleDocuments/ExampleVideoGamePDF.pdf)
+and ask: *How much damage do Ghosts deal, and how much HP do they have?*
+
+[Explore the demo source and all included workflows](Examples/SwiftOrcDemo/README.md).
+
 ## Start with one workflow
 
 The smallest workflow does not require a model, router, checkpoint store, tool,
