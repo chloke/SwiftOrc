@@ -4,7 +4,7 @@ Notable changes to SwiftOrc are documented here. The project follows
 semantic versioning; until 1.0, minor releases may include source-breaking API
 refinements when they are clearly documented.
 
-## 0.1.0 - Unreleased
+## 0.1.0 - 2026-08-01
 
 ### Added
 
