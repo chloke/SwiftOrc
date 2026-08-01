@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager
+/.build/
+/.swiftpm/
+/Packages/
+/Package.resolved
+
+# Xcode user and build state
+xcuserdata/
+DerivedData/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Local credentials and environment overrides
+.netrc
+.env
+.env.*
+!.env.example
+
+# Local profiling output
+*.profraw
+*.profdata
+
+# Editor temporary files
+*.swp
+*~

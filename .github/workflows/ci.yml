@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate package and demo
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: Check formatting
+        run: xcrun swift-format lint --recursive Sources Tests Examples
+
+      - name: Test with coverage
+        run: swift test --enable-code-coverage -Xswiftc -warnings-as-errors
+
+      - name: Build release configuration
+        run: swift build -c release -Xswiftc -warnings-as-errors
+
+      - name: Build demo for macOS
+        run: >-
+          xcodebuild -quiet
+          -project Examples/SwiftOrcDemo/SwiftOrcDemo.xcodeproj
+          -scheme SwiftOrcDemo
+          -destination generic/platform=macOS
+          -derivedDataPath "$RUNNER_TEMP/SwiftOrcDemo-macOS"
+          CODE_SIGNING_ALLOWED=NO
+          SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+          build
+
+      - name: Build demo for iOS
+        run: >-
+          xcodebuild -quiet
+          -project Examples/SwiftOrcDemo/SwiftOrcDemo.xcodeproj
+          -scheme SwiftOrcDemo
+          -destination generic/platform=iOS
+          -derivedDataPath "$RUNNER_TEMP/SwiftOrcDemo-iOS"
+          CODE_SIGNING_ALLOWED=NO
+          SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+          build
+
+      - name: Check whitespace
+        run: git diff --check
