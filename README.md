@@ -1,8 +1,36 @@
 # SwiftOrc
 
-`SwiftOrc` is a small, strongly typed workflow runtime for Swift apps that
-need more reliability around language-model calls. It provides graph execution,
-state transitions, validation, retries, fallback, and optional model adapters.
+`SwiftOrc` is a lightweight, strongly typed framework for building predictable,
+local-first AI workflows in Swift.
+
+It is designed around Apple's on-device Foundation Models while remaining
+provider-neutral. Apps can use private, offline generation by default, then
+explicitly route selected requests to OpenAI-compatible or custom external
+providers when a task requires capabilities the local model cannot provide.
+
+SwiftOrc adds orchestration around those models: typed workflow state,
+validation, retries, fallback, tool policies, structured output, parallel work,
+checkpointing, and privacy-conscious diagnostics.
+
+## Local first, not local only
+
+SwiftOrc's core runtime and Apple Foundation Models integration do not initiate
+network requests. External model access is optional and must be configured by
+the application through `SwiftOrcOpenAICompatible` or a custom model adapter.
+
+The application remains in control of:
+
+- whether network access is permitted;
+- which requests may leave the device;
+- which local or remote providers are eligible;
+- the order in which providers are attempted;
+- whether a deterministic fallback should be used;
+- which tools may run automatically or require approval.
+
+This supports fully offline apps as well as hybrid workflows that begin
+on-device and escalate only when necessary.
+
+## Start with one workflow
 
 The smallest workflow does not require a model, router, checkpoint store, tool,
 or artifact store:
