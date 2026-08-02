@@ -87,7 +87,7 @@ Use scripted tests to verify orchestration rather than model intelligence:
 - malformed structured responses;
 - tool approval and denial paths;
 - checkpoint creation and resume behavior;
-- guarantees that a remote route was never called.
+- guarantees that a remote route was never called;
 - streamed deltas, completion metadata, and pre-delta fallback boundaries.
 
 Evaluate the quality of a real model separately on supported hardware. A

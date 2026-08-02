@@ -1,13 +1,12 @@
 # Contributing
 
-SwiftOrc is currently maintained as a single-author project and is not
-accepting external code contributions. Unsolicited pull requests may be closed
-without review.
+SwiftOrc is not currently accepting external code contributions. Bug reports
+and focused feature requests remain welcome.
 
-Bug reports that contain no sensitive information are welcome. Before opening
-one, search existing issues and include a minimal reproduction, expected
-behavior, actual behavior, supported platform, operating-system version, Xcode
-version, and Swift version.
+Before opening an issue, search existing reports. For bugs, include a minimal
+reproduction, expected behavior, actual behavior, supported platform,
+operating-system version, Xcode version, and Swift version. Do not include
+sensitive application or user data.
 
 Report suspected vulnerabilities through the private process in
 [SECURITY.md](SECURITY.md), never through a public issue.

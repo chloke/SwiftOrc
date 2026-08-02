@@ -9,8 +9,7 @@ eligible device or Mac with Apple Intelligence enabled.
 
 ## Calculator Pipeline
 
-Open **Calculator Pipeline** to inspect the original framework workflow as its
-own focused tool-calling example:
+Open **Calculator Pipeline** to inspect a focused tool-calling workflow:
 
 ```text
 generate -> validate -> inspect (parallel) -> quality-check -> finalize
@@ -75,7 +74,7 @@ To reproduce the documented example, import the bundled
 [sample video-game PDF](SampleDocuments/ExampleVideoGamePDF.pdf) and ask:
 *How much damage do Ghosts deal, and how much HP do they have?*
 
-This first demo intentionally favors a small, inspectable implementation over a
+This demo intentionally favors a small, inspectable implementation over a
 full RAG stack. It supports PDFs up to 20 MB, 250 pages, 1.5 million extracted
 characters, and 1,500 passages. Password-protected files and image-only scans
 are rejected; OCR, embeddings, persistence, and remote providers are outside
@@ -167,7 +166,7 @@ a guarantee of child suitability.
 ## Model-version compatibility example
 
 Open **Model-version and fallback example** from the demo's first screen. This
-second workflow shows how an app can select a task implementation that it has
+workflow shows how an app can select a task implementation that it has
 validated for a particular Apple system-model generation:
 
 ```text
@@ -202,7 +201,6 @@ The repository documentation separates optional concepts:
 - [Language models and routing](../../Documentation/LanguageModels.md)
 - [Model tools and approvals](../../Documentation/Tools.md)
 - [Reliability and checkpoints](../../Documentation/Reliability.md)
-- [Scope and complexity budget](../../Documentation/ScopeAndComplexity.md)
 
 Side-effecting nodes should be idempotent because a node interrupted before the
 next checkpoint can execute again after resume.

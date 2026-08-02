@@ -2,7 +2,8 @@
 
 SwiftOrc's core and Apple Foundation Models products do not initiate
 arbitrary network requests. Networking is opt-in through the separate
-`SwiftOrcOpenAICompatible` product or through application-supplied models
+`SwiftOrcOpenAICompatible`, `SwiftOrcResponsesCompatible`, or
+`SwiftOrcAnthropic` products, or through application-supplied models
 and tools.
 
 ## Secure defaults
