@@ -239,7 +239,6 @@ Applications should depend on a tagged release instead of a moving branch.
 - [Security model and application responsibilities](Documentation/Security.md)
 - [Scope rules and complexity budget](Documentation/ScopeAndComplexity.md)
 - [Testing workflows without providers](Documentation/Testing.md)
-- [Release checklist](Documentation/ReleaseChecklist.md)
 - [Example application](Examples/SwiftOrcDemo/README.md)
 
 The framework intentionally does not provide domain-specific moderation, face
