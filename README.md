@@ -5,8 +5,8 @@ local-first AI workflows in Swift.
 
 It is designed around Apple's on-device Foundation Models while remaining
 provider-neutral. Apps can use private, offline generation by default, then
-explicitly route selected requests to OpenAI-compatible or custom external
-providers when a task requires capabilities the local model cannot provide.
+explicitly route selected requests to optional external providers when a task
+requires capabilities the local model cannot provide.
 
 SwiftOrc adds orchestration around those models: typed workflow state,
 validation, retries, fallback, tool policies, structured output, parallel work,
@@ -16,7 +16,8 @@ checkpointing, and privacy-conscious diagnostics.
 
 SwiftOrc's core runtime and Apple Foundation Models integration do not initiate
 network requests. External model access is optional and must be configured by
-the application through `SwiftOrcOpenAICompatible` or a custom model adapter.
+the application through an optional remote-provider product or a custom model
+adapter.
 
 The application remains in control of:
 
@@ -140,8 +141,10 @@ Add only the products a target needs:
 )
 ```
 
-`SwiftOrcOpenAICompatible` and `SwiftOrcTesting` are separate optional
-products. Applications using only the core runtime do not need a model adapter.
+`SwiftOrcOpenAICompatible`, `SwiftOrcResponsesCompatible`,
+`SwiftOrcAnthropic`, and `SwiftOrcTesting` are separate optional products.
+`SwiftOrcHTTP` contains the shared hardened transport used by remote adapters.
+Applications using only the core runtime do not need any of them.
 
 ## Add only what the app needs
 
@@ -187,7 +190,10 @@ automatic defaults.
 
 - `SwiftOrc`: workflow and provider-neutral model APIs.
 - `SwiftOrcFoundationModels`: Apple's on-device Foundation Models adapter.
+- `SwiftOrcHTTP`: shared transport, credential headers, limits, and retry policy.
 - `SwiftOrcOpenAICompatible`: optional remote Chat Completions adapter.
+- `SwiftOrcResponsesCompatible`: optional, stateless Responses API adapter.
+- `SwiftOrcAnthropic`: optional native Anthropic Messages adapter.
 - `SwiftOrcTesting`: optional scripted models and workflow probes for tests.
 
 The package has no third-party runtime dependencies.
@@ -200,7 +206,10 @@ Individual products can have newer runtime requirements:
 | Product | Runtime availability |
 | --- | --- |
 | `SwiftOrc` | iOS 16+, macOS 13+ |
+| `SwiftOrcHTTP` | iOS 16+, macOS 13+ |
 | `SwiftOrcOpenAICompatible` | iOS 16+, macOS 13+ |
+| `SwiftOrcResponsesCompatible` | iOS 16+, macOS 13+ |
+| `SwiftOrcAnthropic` | iOS 16+, macOS 13+ |
 | `SwiftOrcTesting` | iOS 16+, macOS 13+ |
 | `SwiftOrcFoundationModels` | iOS 26+, macOS 26+ |
 
@@ -234,10 +243,10 @@ Applications should depend on a tagged release instead of a moving branch.
 ## Focused guides
 
 - [Language models, routing, structured output, and images](Documentation/LanguageModels.md)
+- [Provider compatibility and configuration recipes](Documentation/ProviderCompatibility.md)
 - [Tools, access policy, execution policy, and approvals](Documentation/Tools.md)
 - [Validation, recovery, concurrency, tracing, and checkpoints](Documentation/Reliability.md)
 - [Security model and application responsibilities](Documentation/Security.md)
-- [Scope rules and complexity budget](Documentation/ScopeAndComplexity.md)
 - [Testing workflows without providers](Documentation/Testing.md)
 - [Example application](Examples/SwiftOrcDemo/README.md)
 
@@ -247,10 +256,9 @@ compose those capabilities as nodes or optional external packages.
 
 ## Contributing
 
-SwiftOrc is currently maintained as a single-author project and is not
-accepting external code contributions. Bug reports and responsible security
-reports remain welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and
-[SECURITY.md](SECURITY.md).
+External code contributions are not currently accepted. Bug reports and
+responsible security reports remain welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 

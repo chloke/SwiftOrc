@@ -72,7 +72,7 @@ All ordinary error descriptions are serialized as `"The operation failed."`
 plus their type name, including framework errors that may contain model-provided
 associated values. Throw an explicit `WorkflowFailure` when an application has
 reviewed a message and intentionally considers it safe for traces and durable
-checkpoints. OpenAI-compatible provider error bodies are omitted by default;
+checkpoints. Remote-provider error bodies are omitted by default;
 `includesProviderErrorMessages` is an explicit diagnostic opt-in.
 
 ## Graph inspection

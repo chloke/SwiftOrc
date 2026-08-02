@@ -82,7 +82,7 @@ public struct HTTPModelResourceLimits: Sendable, Equatable {
 
     public static let `default` = HTTPModelResourceLimits()
 
-    var isValid: Bool {
+    package var isValid: Bool {
         maximumRequestBodyBytes > 0
             && maximumResponseBodyBytes > 0
             && maximumStreamingEventBytes > 0
@@ -358,7 +358,9 @@ public struct HTTPRequestHeaders: Sendable {
         }
     }
 
-    func values() async throws -> [String: String] {
+    /// Resolves the headers for one request. Remote adapter packages use this
+    /// at call time so applications can keep credentials in Keychain.
+    public func values() async throws -> [String: String] {
         try await resolver()
     }
 

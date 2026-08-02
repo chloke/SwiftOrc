@@ -5,7 +5,10 @@ Import only the adapters an application uses:
 ```swift
 import SwiftOrc
 import SwiftOrcFoundationModels
+import SwiftOrcHTTP
 import SwiftOrcOpenAICompatible
+import SwiftOrcResponsesCompatible
+import SwiftOrcAnthropic
 ```
 
 ## Providers and fallback
@@ -58,6 +61,16 @@ Credentials remain application-owned and should be resolved from Keychain or
 another secret store only when a request is made. A long-lived provider secret
 embedded in a distributed app can be extracted; use short-lived credentials or
 an application-owned gateway when the credential must remain confidential.
+
+Choose the adapter that matches the provider's actual wire protocol:
+
+- `OpenAICompatibleLanguageModel` for Chat Completions-compatible endpoints;
+- `ResponsesCompatibleLanguageModel` for the stateless Responses API shape;
+- `AnthropicLanguageModel` for Anthropic's native Messages API;
+- `AppleFoundationModel` for Apple's on-device model.
+
+See [Provider compatibility](ProviderCompatibility.md) for configurations for
+OpenAI, Anthropic, Gemini, Ollama, LM Studio, Azure, and custom gateways.
 
 The OpenAI-compatible adapter accepts HTTPS by default. Local development
 servers can be enabled explicitly without allowing arbitrary cleartext hosts:
@@ -133,8 +146,9 @@ struct CharacterProfile: LanguageModelStructuredOutput {
 
 `StructuredLanguageModelNode<AppState, CharacterProfile>` asks the selected
 provider for schema-guided output and decodes it before the state reducer runs.
-Decoding errors omit the raw response. OpenAI-compatible adapters use JSON
-schema response format; Apple uses native `GenerationSchema` guidance.
+Decoding errors omit the raw response. Remote adapters translate the neutral
+schema into their protocol's structured-output format; Apple uses native
+`GenerationSchema` guidance.
 
 ## Images and artifacts
 
@@ -167,12 +181,13 @@ let input = try await context.imageInput(for: state.image, detail: .high)
 return LanguageModelRequest(prompt: "Inspect this image.", input: [input])
 ```
 
-The OpenAI-compatible adapter supports inline data and HTTP(S) image URLs with
-size validation. Remote image URLs are sent to the configured provider rather
-than fetched by SwiftOrc. Validate or allowlist user-controlled URLs and
-prefer HTTPS, because the provider or gateway is responsible for preventing
-server-side request forgery. Apple's current Foundation Models prompt API is text-only, so
-its adapter explicitly rejects image input instead of discarding it.
+The remote adapters support inline data and HTTP(S) image URLs with size
+validation. Remote image URLs are sent to the configured provider rather than
+fetched by SwiftOrc. Validate or allowlist user-controlled URLs and prefer
+HTTPS, because the provider or gateway is responsible for preventing
+server-side request forgery. Apple's current Foundation Models prompt API is
+text-only, so its adapter explicitly rejects image input instead of discarding
+it.
 
 ## Stateless and conversational Apple sessions
 
@@ -200,7 +215,7 @@ try await conversation.reset()
 The actor serializes overlapping requests because Apple sessions reject
 concurrent generation. `reset()` waits for in-flight work and replaces the
 session, discarding its transcript. Explicit message arrays, structured output,
-and tools are deliberately unavailable on this stateful adapter in 0.1; use the
+and tools are deliberately unavailable on this stateful adapter; use the
 stateless adapter or another provider when those request features are needed.
 
 ## Streaming
@@ -231,10 +246,11 @@ if a snapshot unexpectedly rewrites prior text. Apple structured-output
 streaming is intentionally rejected because evolving JSON snapshots cannot be
 represented safely as append-only text deltas.
 
-`OpenAICompatibleLanguageModel` consumes Chat Completions server-sent events
-when its transport conforms to `HTTPStreamingModelTransport`. The bundled
-URLSession transport does. Streaming tool calls are not supported in 0.1.
-Provider-internal HTTP retries are not attempted once streaming begins.
+The three remote adapters consume their protocol's server-sent events when the
+transport conforms to `HTTPStreamingModelTransport`. The bundled URLSession
+transport does. Streaming tool calls are not currently supported; ordinary
+non-streaming tool loops remain available. Provider-internal HTTP retries are
+not attempted once streaming begins.
 
 `LanguageModelRouter` is also streaming-aware. It may advance to another route
 only if the failed provider has emitted no text. After the first delta, routing

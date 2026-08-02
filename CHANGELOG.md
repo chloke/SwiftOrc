@@ -4,6 +4,33 @@ Notable changes to SwiftOrc are documented here. The project follows
 semantic versioning; until 1.0, minor releases may include source-breaking API
 refinements when they are clearly documented.
 
+## 0.2.0 - 2026-08-02
+
+### Added
+
+- `SwiftOrcResponsesCompatible`, a stateless adapter for Responses-compatible
+  endpoints with text and image input, structured output, client tools, usage
+  metadata, retries, and SSE text streaming.
+- `SwiftOrcAnthropic`, a native Anthropic Messages adapter with text and image
+  input, conversation turns, structured output, client tools, usage metadata,
+  retries, SSE text streaming, and request-time API-key resolution.
+- `SwiftOrcHTTP`, a provider-neutral product containing the hardened transport,
+  endpoint policy, request headers, retry behavior, resource limits, and
+  redacted provider events shared by optional remote adapters.
+- Provider configuration guidance for OpenAI, Anthropic, Gemini, Ollama,
+  LM Studio, Azure, and custom gateways.
+
+### Changed
+
+- Remote adapters now share the same HTTPS defaults, isolated URLSession
+  transport, same-origin redirect policy, bounded payload handling, retries,
+  and privacy-conscious diagnostics.
+- HTTP request headers can be resolved independently by every remote adapter
+  while preserving request-time credential loading.
+- Existing `SwiftOrcOpenAICompatible` HTTP configuration names remain available
+  through compatibility aliases, so 0.1 integrations do not require import
+  changes.
+
 ## 0.1.0 - 2026-08-01
 
 ### Added

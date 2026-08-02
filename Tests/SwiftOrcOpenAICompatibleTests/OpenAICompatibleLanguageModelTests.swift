@@ -2,6 +2,7 @@ import Foundation
 import SwiftOrc
 import Testing
 
+@testable import SwiftOrcHTTP
 @testable import SwiftOrcOpenAICompatible
 
 private enum TransportStep: Sendable {

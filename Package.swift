@@ -20,8 +20,20 @@ let package = Package(
             targets: ["SwiftOrcFoundationModels"]
         ),
         .library(
+            name: "SwiftOrcHTTP",
+            targets: ["SwiftOrcHTTP"]
+        ),
+        .library(
             name: "SwiftOrcOpenAICompatible",
             targets: ["SwiftOrcOpenAICompatible"]
+        ),
+        .library(
+            name: "SwiftOrcResponsesCompatible",
+            targets: ["SwiftOrcResponsesCompatible"]
+        ),
+        .library(
+            name: "SwiftOrcAnthropic",
+            targets: ["SwiftOrcAnthropic"]
         ),
         .library(
             name: "SwiftOrcTesting",
@@ -37,8 +49,28 @@ let package = Package(
             dependencies: ["SwiftOrc"]
         ),
         .target(
+            name: "SwiftOrcHTTP"
+        ),
+        .target(
             name: "SwiftOrcOpenAICompatible",
-            dependencies: ["SwiftOrc"]
+            dependencies: [
+                "SwiftOrc",
+                "SwiftOrcHTTP",
+            ]
+        ),
+        .target(
+            name: "SwiftOrcResponsesCompatible",
+            dependencies: [
+                "SwiftOrc",
+                "SwiftOrcHTTP",
+            ]
+        ),
+        .target(
+            name: "SwiftOrcAnthropic",
+            dependencies: [
+                "SwiftOrc",
+                "SwiftOrcHTTP",
+            ]
         ),
         .target(
             name: "SwiftOrcTesting",
@@ -52,7 +84,24 @@ let package = Package(
             name: "SwiftOrcOpenAICompatibleTests",
             dependencies: [
                 "SwiftOrc",
+                "SwiftOrcHTTP",
                 "SwiftOrcOpenAICompatible",
+            ]
+        ),
+        .testTarget(
+            name: "SwiftOrcResponsesCompatibleTests",
+            dependencies: [
+                "SwiftOrc",
+                "SwiftOrcHTTP",
+                "SwiftOrcResponsesCompatible",
+            ]
+        ),
+        .testTarget(
+            name: "SwiftOrcAnthropicTests",
+            dependencies: [
+                "SwiftOrc",
+                "SwiftOrcHTTP",
+                "SwiftOrcAnthropic",
             ]
         ),
         .testTarget(

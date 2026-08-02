@@ -56,7 +56,7 @@ enum PDFKnowledgeLoadingError: Error, Equatable {
         case let .tooMuchText(maximumCharacters):
             "The PDF contains more than the demo limit of \(maximumCharacters.formatted()) extracted characters."
         case .noSelectableText:
-            "No selectable text was found. Scanned PDFs require OCR, which is outside this first demo."
+            "No selectable text was found. Scanned PDFs require OCR, which is outside this example's scope."
         case let .tooManyChunks(maximum):
             "The PDF produced more than the demo limit of \(maximum) searchable passages."
         }
