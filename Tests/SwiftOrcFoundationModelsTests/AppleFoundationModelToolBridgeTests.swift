@@ -42,10 +42,71 @@ private func addTool() -> ClosureLanguageModelTool<AddArguments, AddResult> {
     )
 }
 
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+private func nativeAddTool() throws -> AppleBridgedTool {
+    let registration = LanguageModelToolRegistration(tool: addTool())
+    let definition = try AppleBridgedToolDefinition(
+        definition: registration.definition
+    )
+    let recorder = AppleToolExecutionRecorder(onEvent: nil)
+    let executor = try LanguageModelToolExecutor(registrations: [registration])
+    return definition.makeTool(recorder: recorder, executor: executor)
+}
+
 @Test
 @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
 func acceptsProviderNeutralToolsWithSupportedSchemas() throws {
     _ = try AppleFoundationModel(workflowTools: [addTool()])
+}
+
+@Test
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+func nativeToolsAreDisabledByExplicitNoneChoice() throws {
+    let model = AppleFoundationModel(nativeTools: [try nativeAddTool()])
+    let selected = try model.selectedNativeTools(
+        for: LanguageModelRequest(
+            prompt: "Do not use tools.",
+            toolChoice: LanguageModelToolChoice.none,
+            toolAccessPolicy: LanguageModelToolAccessPolicy(rules: [])
+        )
+    )
+
+    #expect(selected.isEmpty)
+}
+
+@Test
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+func nativeToolsHonorRequestScopedSelection() throws {
+    let model = AppleFoundationModel(nativeTools: [try nativeAddTool()])
+    let selected = try model.selectedNativeTools(
+        for: LanguageModelRequest(
+            prompt: "Add two numbers.",
+            tools: [addTool().definition],
+            toolChoice: .tool("add")
+        )
+    )
+
+    #expect(selected.map(\.name) == ["add"])
+}
+
+@Test
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+func nativeToolsRejectUnsupportedAccessPolicies() throws {
+    let model = AppleFoundationModel(nativeTools: [try nativeAddTool()])
+
+    do {
+        _ = try model.selectedNativeTools(
+            for: LanguageModelRequest(
+                prompt: "Add two numbers.",
+                toolAccessPolicy: LanguageModelToolAccessPolicy(rules: [])
+            )
+        )
+        Issue.record("Expected native tool access policy to be rejected")
+    } catch let error as AppleFoundationModelError {
+        #expect(
+            error == .unsupportedInput(kind: "native-tool-access-policy")
+        )
+    }
 }
 
 @Test

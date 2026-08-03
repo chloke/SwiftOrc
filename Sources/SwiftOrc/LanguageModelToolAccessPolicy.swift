@@ -149,7 +149,7 @@ public struct LanguageModelToolAccessRule: Sendable, Equatable, Codable {
 ///
 /// The first matching rule wins. Tools with a `.denied` result are not exposed
 /// to the model. The default is intentionally deny-by-default whenever a policy
-/// is supplied; omitting the policy preserves the legacy exposure behavior.
+/// is supplied; omitting the policy leaves the registered tools available.
 public struct LanguageModelToolAccessPolicy: Sendable, Equatable, Codable {
     public var rules: [LanguageModelToolAccessRule]
     public var defaultAuthorization: LanguageModelToolAuthorization
