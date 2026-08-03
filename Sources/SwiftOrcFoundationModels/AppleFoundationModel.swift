@@ -154,6 +154,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
             throw AppleFoundationModelError.unavailable(reason)
         }
 
+        let selectedNativeTools = try selectedNativeTools(for: request)
         let recorder = AppleToolExecutionRecorder(onEvent: onToolEvent)
         let bridgedTools: [AppleBridgedTool]
         if let toolExecutor {
@@ -169,7 +170,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         } else {
             bridgedTools = []
         }
-        let sessionTools: [any Tool] = nativeTools + bridgedTools
+        let sessionTools: [any Tool] = selectedNativeTools + bridgedTools
         let session = LanguageModelSession(
             model: model,
             tools: sessionTools,
@@ -238,6 +239,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
                         return
                     }
 
+                    let selectedNativeTools = try selectedNativeTools(for: request)
                     let recorder = AppleToolExecutionRecorder(onEvent: onToolEvent)
                     let bridgedTools: [AppleBridgedTool]
                     if let toolExecutor {
@@ -255,7 +257,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
                     }
                     let session = LanguageModelSession(
                         model: model,
-                        tools: nativeTools + bridgedTools,
+                        tools: selectedNativeTools + bridgedTools,
                         instructions: combinedInstructions(with: request.instructions)
                     )
                     let prompt = try Self.prompt(from: request)
@@ -383,6 +385,53 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
                 authorization: authorization
             )
         }
+        if request.toolChoice == .required, selected.isEmpty {
+            throw AppleFoundationModelToolBridgeError.noToolsAllowed
+        }
+        return selected
+    }
+
+    func selectedNativeTools(
+        for request: LanguageModelRequest
+    ) throws -> [any Tool] {
+        guard !nativeTools.isEmpty else { return [] }
+        if request.toolChoice == LanguageModelToolChoice.none { return [] }
+
+        // Native Foundation Models tools execute outside SwiftOrc's tool
+        // executor, so request-scoped authorization and approval cannot be
+        // enforced for them. Refuse the request instead of silently bypassing
+        // its policy. Policy-aware applications should use bridged workflow
+        // tool registrations.
+        if request.toolAccessPolicy != nil {
+            throw AppleFoundationModelError.unsupportedInput(
+                kind: "native-tool-access-policy"
+            )
+        }
+
+        let registeredNames = Set(nativeTools.map(\.name))
+        let requestedNames: Set<String>
+        if request.tools.isEmpty {
+            requestedNames = registeredNames
+        } else {
+            requestedNames = Set(request.tools.map(\.name))
+            for name in requestedNames where !registeredNames.contains(name) {
+                throw
+                    AppleFoundationModelToolBridgeError
+                    .requestedToolNotRegistered(name)
+            }
+        }
+
+        if case let .tool(name) = request.toolChoice {
+            guard requestedNames.contains(name), registeredNames.contains(name)
+            else {
+                throw
+                    AppleFoundationModelToolBridgeError
+                    .requestedToolNotRegistered(name)
+            }
+            return nativeTools.filter { $0.name == name }
+        }
+
+        let selected = nativeTools.filter { requestedNames.contains($0.name) }
         if request.toolChoice == .required, selected.isEmpty {
             throw AppleFoundationModelToolBridgeError.noToolsAllowed
         }

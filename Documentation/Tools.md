@@ -125,4 +125,9 @@ let apple = try AppleFoundationModel(
 The adapter converts supported provider-neutral schemas into Apple's generation
 schemas and enforces the same execution and access policies. Existing native
 `FoundationModels.Tool` implementations can instead use
-`AppleFoundationModel(nativeTools:)`.
+`AppleFoundationModel(nativeTools:)`. Native tools honor `toolChoice: .none`
+and request-scoped tool-name selection. Because native tools execute outside
+SwiftOrc's tool executor, they cannot enforce `toolAccessPolicy` or SwiftOrc
+approval handlers; a request that enables native tools while supplying an
+access policy fails explicitly. Use `workflowToolRegistrations:` whenever
+request-scoped authorization or user approval is required.

@@ -4,6 +4,20 @@ Notable changes to SwiftOrc are documented here. The project follows
 semantic versioning; until 1.0, minor releases may include source-breaking API
 refinements when they are clearly documented.
 
+## 0.3.0 - 2026-08-03
+
+### Changed
+
+- Removed the temporary 0.1 HTTP type aliases from
+  `SwiftOrcOpenAICompatible`. Applications configuring remote transports now
+  import the canonical `SwiftOrcHTTP` product directly.
+
+### Fixed
+
+- Apple-native Foundation Models tools now honor explicit tool disabling and
+  request-scoped name selection. Requests no longer silently bypass a supplied
+  SwiftOrc tool access policy when using native tools.
+
 ## 0.2.0 - 2026-08-02
 
 ### Added
