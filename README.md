@@ -163,6 +163,7 @@ Advanced behavior is opt-in and defaults to being absent:
 | Incremental model output | `StreamingLanguageModelNode` |
 | Stateful Apple conversation | `AppleFoundationModelConversation` |
 | Developer graph UI | `workflow.declaredGraph` |
+| Fragmented or background execution | `WorkflowExecutionBudget` |
 | Deterministic tests | The optional `SwiftOrcTesting` product |
 
 For example, one model step needs only a model, request, and reducer:

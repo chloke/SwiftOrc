@@ -54,6 +54,58 @@ non-positive limit is rejected when the graph is built.
 Side effects should remain in explicit nodes and should be idempotent whenever
 the workflow may resume from a checkpoint.
 
+## Budgeted execution and deliberate suspension
+
+Use an execution budget when one logical workflow must be spread across short
+runtime opportunities. A budget is applied to one invocation and resets on
+every resume. It does not replace the workflow configuration's cumulative
+`maximumSteps` safety limit.
+
+```swift
+let clock = ContinuousClock()
+let budget = WorkflowExecutionBudget(
+    maximumNodeExecutions: 2,
+    deadline: clock.now.advanced(by: .seconds(20))
+)
+
+let result = try await workflow.run(initialState, budget: budget)
+
+switch result {
+case let .completed(run):
+    use(run.state)
+
+case let .suspended(continuation):
+    try await checkpointStore.save(continuation.checkpoint)
+}
+```
+
+Continue later with a fresh budget:
+
+```swift
+let result = try await workflow.resume(
+    from: savedCheckpoint,
+    budget: WorkflowExecutionBudget(maximumNodeExecutions: 1)
+)
+```
+
+`maximumNodeExecutions` counts every node attempt, including retries and branch
+nodes. A non-positive value is rejected. The monotonic deadline is checked only
+between nodes. SwiftOrc never interrupts a node that has already started; if a
+deadline passes during a model call, tool call, or other node, that node finishes
+before the workflow suspends at the next safe boundary. Cancellation remains the
+mechanism for responding to an operating-system expiration callback.
+
+A suspension is successful control flow, not a failure. It returns a
+`WorkflowContinuation` containing a durable checkpoint, the reason for yielding,
+and the number of node executions used by that invocation. If an `onCheckpoint`
+handler is supplied, it receives the suspension checkpoint before the method
+returns.
+
+The ordinary `run` and `resume` overloads remain unbudgeted and continue to
+return `WorkflowRun` directly. `WorkflowExecutionBudget.unlimited` provides the
+same node-budget behavior through the budgeted result API, while the workflow's
+cumulative configuration limits still apply.
+
 ## Events
 
 Pass `onEvent` only when the application needs tracing:
@@ -108,6 +160,10 @@ if let checkpoint = try await store.load() {
 
 Checkpoints occur at safe boundaries between nodes. If the process terminates
 while a node is executing, that node can execute again after resume.
+
+Budgeted suspension also produces a checkpoint without requiring an
+`onCheckpoint` handler. Persist the checkpoint carried by the returned
+`WorkflowContinuation` before the current runtime opportunity ends.
 
 The JSON store rejects files larger than 8 MiB by default and refuses symbolic
 links. Pass a different positive `maximumBytes` only when the application's
