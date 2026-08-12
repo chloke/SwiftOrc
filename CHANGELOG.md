@@ -4,6 +4,27 @@ Notable changes to SwiftOrc are documented here. The project follows
 semantic versioning; until 1.0, minor releases may include source-breaking API
 refinements when they are clearly documented.
 
+## 0.4.0 - 2026-08-12
+
+### Added
+
+- `WorkflowExecutionBudget` for limiting node executions or supplying a
+  monotonic deadline to one workflow invocation.
+- Budgeted `run` and `resume` overloads that return either a completed
+  `WorkflowRun` or a resumable `WorkflowContinuation` at a safe node boundary.
+- Structured suspension reasons and durable checkpoints that preserve retry
+  attempts, recovery history, cumulative step counts, and execution identity
+  across invocations.
+
+### Compatibility
+
+- Existing unbudgeted `run` and `resume` overloads are unchanged.
+- Existing public enums gain no new cases, preserving exhaustive downstream
+  switches.
+- Execution deadlines are cooperative boundaries: an in-progress node is not
+  interrupted and may run again only if the process terminates before its next
+  checkpoint is committed.
+
 ## 0.3.0 - 2026-08-03
 
 ### Changed

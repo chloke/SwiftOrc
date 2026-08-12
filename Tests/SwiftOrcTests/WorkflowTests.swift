@@ -255,6 +255,216 @@ func stopsInfiniteGraphsAtStepLimit() async throws {
 }
 
 @Test
+func budgetedExecutionSuspendsAndResumesWithoutRepeatingNodes() async throws {
+    let first = AnyWorkflowNode<TestState>(id: "first") { state, _ in
+        var state = state
+        state.value += 1
+        return .next(state, "second")
+    }
+    let second = AnyWorkflowNode<TestState>(id: "second") { state, _ in
+        var state = state
+        state.value += 10
+        return .next(state, "third")
+    }
+    let third = AnyWorkflowNode<TestState>(id: "third") { state, _ in
+        var state = state
+        state.value += 100
+        return .finish(state)
+    }
+    let workflow = try Workflow<TestState>(
+        definitionID: "budgeted-resume-v1",
+        initialNode: "first"
+    ) {
+        first
+        second
+        third
+    }
+    let budget = WorkflowExecutionBudget(maximumNodeExecutions: 1)
+
+    let firstResult = try await workflow.run(TestState(), budget: budget)
+    guard case let .suspended(firstContinuation) = firstResult else {
+        Issue.record("Expected the first invocation to suspend")
+        return
+    }
+    #expect(firstContinuation.nodeExecutions == 1)
+    #expect(
+        firstContinuation.reason
+            == .maximumNodeExecutionsReached(limit: 1)
+    )
+    #expect(firstContinuation.checkpoint.state.value == 1)
+    #expect(firstContinuation.checkpoint.nextNode == "second")
+    #expect(firstContinuation.checkpoint.steps == 1)
+
+    let encodedContinuation = try JSONEncoder().encode(firstContinuation)
+    let decodedContinuation = try JSONDecoder().decode(
+        WorkflowContinuation<TestState>.self,
+        from: encodedContinuation
+    )
+    #expect(decodedContinuation.reason == firstContinuation.reason)
+    #expect(decodedContinuation.nodeExecutions == 1)
+    #expect(decodedContinuation.checkpoint.state.value == 1)
+    #expect(decodedContinuation.checkpoint.nextNode == "second")
+
+    let secondResult = try await workflow.resume(
+        from: firstContinuation.checkpoint,
+        budget: budget
+    )
+    guard case let .suspended(secondContinuation) = secondResult else {
+        Issue.record("Expected the second invocation to suspend")
+        return
+    }
+    #expect(secondContinuation.nodeExecutions == 1)
+    #expect(secondContinuation.checkpoint.state.value == 11)
+    #expect(secondContinuation.checkpoint.nextNode == "third")
+    #expect(secondContinuation.checkpoint.steps == 2)
+    #expect(
+        secondContinuation.checkpoint.executionID
+            == firstContinuation.checkpoint.executionID
+    )
+
+    let finalResult = try await workflow.resume(
+        from: secondContinuation.checkpoint,
+        budget: budget
+    )
+    guard case let .completed(run) = finalResult else {
+        Issue.record("Expected the final invocation to complete")
+        return
+    }
+    #expect(run.state.value == 111)
+    #expect(run.steps == 3)
+    #expect(run.executionID == firstContinuation.checkpoint.executionID)
+
+    let starts = run.events.compactMap { event -> NodeID? in
+        guard case let .nodeStarted(node, _, _) = event else { return nil }
+        return node
+    }
+    #expect(starts == ["first", "second", "third"])
+}
+
+@Test
+func budgetSuspendsWithCheckpointedRetryAttempt() async throws {
+    let retry = AnyWorkflowNode<TestState>(id: "retry") { state, context in
+        if context.attempt == 1 {
+            return .retry(state)
+        }
+        var state = state
+        state.value = context.attempt
+        return .finish(state)
+    }
+    let workflow = try Workflow<TestState>(
+        definitionID: "budgeted-retry-v1",
+        initialNode: "retry"
+    ) {
+        retry
+    }
+    let budget = WorkflowExecutionBudget(maximumNodeExecutions: 1)
+
+    let firstResult = try await workflow.run(TestState(), budget: budget)
+    guard case let .suspended(continuation) = firstResult else {
+        Issue.record("Expected the retry to consume the invocation budget")
+        return
+    }
+    #expect(continuation.checkpoint.nextNode == "retry")
+    #expect(continuation.checkpoint.attempt == 2)
+    #expect(continuation.checkpoint.steps == 1)
+
+    let resumed = try await workflow.resume(
+        from: continuation.checkpoint,
+        budget: budget
+    )
+    guard case let .completed(run) = resumed else {
+        Issue.record("Expected the checkpointed retry to complete")
+        return
+    }
+    #expect(run.state.value == 2)
+    #expect(run.steps == 2)
+}
+
+@Test
+func elapsedDeadlineSuspendsBeforeStartingANode() async throws {
+    let calls = StringRecorder()
+    let node = AnyWorkflowNode<TestState>(id: "node") { state, _ in
+        await calls.append("node")
+        return .finish(state)
+    }
+    let workflow = try Workflow<TestState>(
+        definitionID: "deadline-v1",
+        initialNode: "node"
+    ) {
+        node
+    }
+    let recorder = CheckpointRecorder<TestState>()
+    let budget = WorkflowExecutionBudget(deadline: ContinuousClock().now)
+
+    let result = try await workflow.run(
+        TestState(),
+        budget: budget,
+        onCheckpoint: { checkpoint in
+            await recorder.record(checkpoint)
+        }
+    )
+
+    guard case let .suspended(continuation) = result else {
+        Issue.record("Expected the elapsed deadline to suspend")
+        return
+    }
+    #expect(continuation.reason == .deadlineReached)
+    #expect(continuation.nodeExecutions == 0)
+    #expect(continuation.checkpoint.steps == 0)
+    #expect(continuation.checkpoint.nextNode == "node")
+    #expect(await calls.values.isEmpty)
+    #expect(await recorder.checkpoints.count == 1)
+    let recordedCheckpoint = try #require(await recorder.checkpoints.first)
+    #expect(recordedCheckpoint.executionID == continuation.checkpoint.executionID)
+    #expect(recordedCheckpoint.nextNode == continuation.checkpoint.nextNode)
+    #expect(recordedCheckpoint.steps == continuation.checkpoint.steps)
+}
+
+@Test
+func rejectsNonPositiveInvocationNodeBudget() async throws {
+    let node = AnyWorkflowNode<TestState>(id: "node") { state, _ in
+        .finish(state)
+    }
+    let workflow = try Workflow<TestState>(initialNode: "node") {
+        node
+    }
+
+    do {
+        _ = try await workflow.run(
+            TestState(),
+            budget: WorkflowExecutionBudget(maximumNodeExecutions: 0)
+        )
+        Issue.record("Expected a non-positive node budget to be rejected")
+    } catch let error as WorkflowExecutionBudgetError {
+        #expect(error == .invalidMaximumNodeExecutions(0))
+    }
+}
+
+@Test
+func unlimitedInvocationBudgetCompletesNormally() async throws {
+    let node = AnyWorkflowNode<TestState>(id: "node") { state, _ in
+        var state = state
+        state.value = 42
+        return .finish(state)
+    }
+    let workflow = try Workflow<TestState>(initialNode: "node") {
+        node
+    }
+
+    let result = try await workflow.run(
+        TestState(),
+        budget: .unlimited
+    )
+
+    guard case let .completed(run) = result else {
+        Issue.record("Expected the unlimited budget to complete")
+        return
+    }
+    #expect(run.state.value == 42)
+    #expect(run.steps == 1)
+}
+
+@Test
 func rejectsUnknownTransitionTargets() async throws {
     let node = AnyWorkflowNode<TestState>(id: "start") { state, _ in
         .next(state, "missing")

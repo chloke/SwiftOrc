@@ -100,6 +100,43 @@ public struct Workflow<State: Sendable>: Sendable {
         )
         await onEvent?(started)
 
+        let result = try await execute(
+            state: initialState,
+            executionID: executionID,
+            currentNodeID: initialNode,
+            attempt: 1,
+            steps: 0,
+            events: [started],
+            recoveries: [],
+            executionBudget: nil,
+            artifactStore: artifactStore,
+            onCheckpoint: onCheckpoint,
+            onEvent: onEvent
+        )
+        guard case let .completed(run) = result else {
+            preconditionFailure("An unbudgeted workflow cannot suspend.")
+        }
+        return run
+    }
+
+    /// Starts a workflow and yields a continuation when this invocation's
+    /// execution budget is exhausted at a safe node boundary.
+    public func run(
+        _ initialState: State,
+        budget: WorkflowExecutionBudget,
+        onEvent: WorkflowEventHandler? = nil,
+        onCheckpoint: WorkflowCheckpointHandler<State>? = nil,
+        artifactStore: (any WorkflowArtifactStore)? = nil
+    ) async throws -> WorkflowExecutionResult<State> {
+        try validate(budget)
+
+        let executionID = UUID()
+        let started = WorkflowEvent.started(
+            executionID: executionID,
+            initialNode: initialNode
+        )
+        await onEvent?(started)
+
         return try await execute(
             state: initialState,
             executionID: executionID,
@@ -108,6 +145,7 @@ public struct Workflow<State: Sendable>: Sendable {
             steps: 0,
             events: [started],
             recoveries: [],
+            executionBudget: budget,
             artifactStore: artifactStore,
             onCheckpoint: onCheckpoint,
             onEvent: onEvent
@@ -131,6 +169,45 @@ public struct Workflow<State: Sendable>: Sendable {
         )
         await onEvent?(resumed)
 
+        let result = try await execute(
+            state: checkpoint.state,
+            executionID: checkpoint.executionID,
+            currentNodeID: checkpoint.nextNode,
+            attempt: checkpoint.attempt,
+            steps: checkpoint.steps,
+            events: checkpoint.events + [resumed],
+            recoveries: checkpoint.recoveries,
+            executionBudget: nil,
+            artifactStore: artifactStore,
+            onCheckpoint: onCheckpoint,
+            onEvent: onEvent
+        )
+        guard case let .completed(run) = result else {
+            preconditionFailure("An unbudgeted workflow cannot suspend.")
+        }
+        return run
+    }
+
+    /// Continues a workflow from a checkpoint and applies a fresh execution
+    /// budget to this invocation.
+    public func resume(
+        from checkpoint: WorkflowCheckpoint<State>,
+        budget: WorkflowExecutionBudget,
+        onEvent: WorkflowEventHandler? = nil,
+        onCheckpoint: WorkflowCheckpointHandler<State>? = nil,
+        artifactStore: (any WorkflowArtifactStore)? = nil
+    ) async throws -> WorkflowExecutionResult<State> {
+        try validate(checkpoint)
+        try validate(budget)
+
+        let resumed = WorkflowEvent.resumed(
+            executionID: checkpoint.executionID,
+            node: checkpoint.nextNode,
+            attempt: checkpoint.attempt,
+            steps: checkpoint.steps
+        )
+        await onEvent?(resumed)
+
         return try await execute(
             state: checkpoint.state,
             executionID: checkpoint.executionID,
@@ -139,10 +216,21 @@ public struct Workflow<State: Sendable>: Sendable {
             steps: checkpoint.steps,
             events: checkpoint.events + [resumed],
             recoveries: checkpoint.recoveries,
+            executionBudget: budget,
             artifactStore: artifactStore,
             onCheckpoint: onCheckpoint,
             onEvent: onEvent
         )
+    }
+
+    private func validate(_ budget: WorkflowExecutionBudget) throws {
+        if let maximum = budget.maximumNodeExecutions,
+            maximum <= 0
+        {
+            throw
+                WorkflowExecutionBudgetError
+                .invalidMaximumNodeExecutions(maximum)
+        }
     }
 
     private static func derivedDefinitionID(

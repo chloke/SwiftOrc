@@ -9,10 +9,11 @@ extension Workflow {
         steps initialSteps: Int,
         events initialEvents: [WorkflowEvent],
         recoveries initialRecoveries: [WorkflowRecovery],
+        executionBudget: WorkflowExecutionBudget?,
         artifactStore: (any WorkflowArtifactStore)?,
         onCheckpoint: WorkflowCheckpointHandler<State>?,
         onEvent: WorkflowEventHandler?
-    ) async throws -> WorkflowRun<State> {
+    ) async throws -> WorkflowExecutionResult<State> {
         var cursor = WorkflowExecutionCursor(
             state: initialState,
             currentNodeID: initialNodeID,
@@ -22,8 +23,36 @@ extension Workflow {
             recoveries: initialRecoveries,
             shouldCreateCheckpoint: true
         )
+        var invocationNodeExecutions = 0
 
         while true {
+            if let executionBudget {
+                try await checkCancellation(
+                    cursor: &cursor,
+                    onEvent: onEvent
+                )
+                try await requireRemainingWorkflowSteps(
+                    cursor: &cursor,
+                    executionID: executionID,
+                    onEvent: onEvent
+                )
+
+                if let reason = suspensionReason(
+                    for: executionBudget,
+                    nodeExecutions: invocationNodeExecutions
+                ) {
+                    let continuation = try await suspend(
+                        cursor: &cursor,
+                        executionID: executionID,
+                        reason: reason,
+                        nodeExecutions: invocationNodeExecutions,
+                        onCheckpoint: onCheckpoint,
+                        onEvent: onEvent
+                    )
+                    return .suspended(continuation)
+                }
+            }
+
             if cursor.shouldCreateCheckpoint {
                 try await createCheckpointIfNeeded(
                     cursor: &cursor,
@@ -33,27 +62,12 @@ extension Workflow {
                 )
             }
 
-            do {
-                try Task.checkCancellation()
-            } catch {
-                await cursor.record(
-                    .cancelled(node: cursor.currentNodeID),
-                    onEvent: onEvent
-                )
-                throw CancellationError()
-            }
-
-            guard cursor.steps < configuration.maximumSteps else {
-                let error = WorkflowError.stepLimitExceeded(
-                    limit: configuration.maximumSteps
-                )
-                throw await cursor.terminalError(
-                    capturing: error,
-                    executionID: executionID,
-                    node: cursor.currentNodeID,
-                    onEvent: onEvent
-                )
-            }
+            try await checkCancellation(cursor: &cursor, onEvent: onEvent)
+            try await requireRemainingWorkflowSteps(
+                cursor: &cursor,
+                executionID: executionID,
+                onEvent: onEvent
+            )
 
             guard let node = nodes[cursor.currentNodeID] else {
                 let error = WorkflowError.transitionTargetNotFound(
@@ -69,6 +83,7 @@ extension Workflow {
             }
 
             cursor.steps += 1
+            invocationNodeExecutions += 1
             let context = WorkflowContext(
                 executionID: executionID,
                 nodeID: cursor.currentNodeID,
@@ -124,9 +139,114 @@ extension Workflow {
                 executionID: executionID,
                 onEvent: onEvent
             ) {
-                return run
+                return .completed(run)
             }
         }
+    }
+
+    private func checkCancellation(
+        cursor: inout WorkflowExecutionCursor<State>,
+        onEvent: WorkflowEventHandler?
+    ) async throws {
+        do {
+            try Task.checkCancellation()
+        } catch {
+            await cursor.record(
+                .cancelled(node: cursor.currentNodeID),
+                onEvent: onEvent
+            )
+            throw CancellationError()
+        }
+    }
+
+    private func requireRemainingWorkflowSteps(
+        cursor: inout WorkflowExecutionCursor<State>,
+        executionID: UUID,
+        onEvent: WorkflowEventHandler?
+    ) async throws {
+        guard cursor.steps < configuration.maximumSteps else {
+            let error = WorkflowError.stepLimitExceeded(
+                limit: configuration.maximumSteps
+            )
+            throw await cursor.terminalError(
+                capturing: error,
+                executionID: executionID,
+                node: cursor.currentNodeID,
+                onEvent: onEvent
+            )
+        }
+    }
+
+    private func suspensionReason(
+        for budget: WorkflowExecutionBudget,
+        nodeExecutions: Int
+    ) -> WorkflowSuspensionReason? {
+        if let maximum = budget.maximumNodeExecutions,
+            nodeExecutions >= maximum
+        {
+            return .maximumNodeExecutionsReached(limit: maximum)
+        }
+        if let deadline = budget.deadline,
+            ContinuousClock().now >= deadline
+        {
+            return .deadlineReached
+        }
+        return nil
+    }
+
+    private func suspend(
+        cursor: inout WorkflowExecutionCursor<State>,
+        executionID: UUID,
+        reason: WorkflowSuspensionReason,
+        nodeExecutions: Int,
+        onCheckpoint: WorkflowCheckpointHandler<State>?,
+        onEvent: WorkflowEventHandler?
+    ) async throws -> WorkflowContinuation<State> {
+        await cursor.record(
+            .checkpointCreated(
+                executionID: executionID,
+                nextNode: cursor.currentNodeID,
+                attempt: cursor.attempt,
+                steps: cursor.steps
+            ),
+            onEvent: onEvent
+        )
+
+        let checkpoint = WorkflowCheckpoint(
+            definitionID: definitionID,
+            executionID: executionID,
+            state: cursor.state,
+            nextNode: cursor.currentNodeID,
+            attempt: cursor.attempt,
+            steps: cursor.steps,
+            events: cursor.events,
+            recoveries: cursor.recoveries
+        )
+
+        if let onCheckpoint {
+            do {
+                try await onCheckpoint(checkpoint)
+            } catch is CancellationError {
+                await cursor.record(
+                    .cancelled(node: cursor.currentNodeID),
+                    onEvent: onEvent
+                )
+                throw CancellationError()
+            } catch {
+                throw await cursor.terminalError(
+                    capturing: error,
+                    executionID: executionID,
+                    node: cursor.currentNodeID,
+                    onEvent: onEvent
+                )
+            }
+        }
+
+        return WorkflowContinuation(
+            checkpoint: checkpoint,
+            reason: reason,
+            nodeExecutions: nodeExecutions
+        )
     }
 
     func validate(_ checkpoint: WorkflowCheckpoint<State>) throws {
