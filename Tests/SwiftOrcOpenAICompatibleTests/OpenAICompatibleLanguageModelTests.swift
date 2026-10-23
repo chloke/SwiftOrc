@@ -1068,3 +1068,60 @@ func bundledTransportEnforcesBodyAndStreamingLineLimitsWhileReading() async thro
         #expect(error == .streamingEventTooLarge(maximum: 16))
     }
 }
+
+@Test
+func truncatedStreamWithoutTerminalEventFails() async throws {
+    let model = try OpenAICompatibleLanguageModel(
+        providerIdentifier: "truncated",
+        endpoint: endpoint,
+        modelIdentifier: "model",
+        retryPolicy: .none,
+        transport: RecordingStreamingTransport(lines: [
+            #"data: {"choices":[{"delta":{"content":"Partial"},"finish_reason":null}]}"#
+        ])
+    )
+
+    do {
+        for try await _ in model.stream(LanguageModelRequest(prompt: "Hello")) {}
+        Issue.record("Expected the truncated stream to fail")
+    } catch let error as OpenAICompatibleLanguageModelError {
+        guard case .invalidResponse = error else {
+            Issue.record("Unexpected error: \(error)")
+            return
+        }
+    }
+}
+
+@Test
+func streamEndingWithDoneMarkerCompletesWithoutFinishReason() async throws {
+    let model = try OpenAICompatibleLanguageModel(
+        providerIdentifier: "done-only",
+        endpoint: endpoint,
+        modelIdentifier: "model",
+        retryPolicy: .none,
+        transport: RecordingStreamingTransport(lines: [
+            #"data: {"choices":[{"delta":{"content":"Complete"}}]}"#,
+            "data: [DONE]",
+        ])
+    )
+
+    var completed: LanguageModelResponse?
+    for try await event in model.stream(LanguageModelRequest(prompt: "Hello")) {
+        if case let .completed(response) = event { completed = response }
+    }
+    #expect(completed?.content == "Complete")
+}
+
+@Test
+func defaultTransportsShareOneSession() {
+    let first = URLSessionHTTPModelTransport()
+    let second = URLSessionHTTPModelTransport(
+        limits: HTTPModelResourceLimits(maximumResponseBodyBytes: 1_024)
+    )
+    #expect(first.session === second.session)
+}
+
+@Test
+func defaultRetryPolicyRetriesOverloadedStatus() {
+    #expect(HTTPModelRetryPolicy().retryableStatusCodes.contains(529))
+}

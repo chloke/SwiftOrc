@@ -361,10 +361,15 @@ public struct LanguageModelRouter: WorkflowLanguageModel {
 
             foundEligibleProvider = true
             await onEvent?(.started(provider: route.provider))
+            let sideEffects = LanguageModelToolSideEffectTracker()
 
             do {
                 try Task.checkCancellation()
-                var response = try await route.generate(request)
+                var response =
+                    try await LanguageModelToolSideEffectTracker
+                    .$current.withValue(sideEffects) {
+                        try await route.generate(request)
+                    }
                 try Task.checkCancellation()
 
                 attempts.append(
@@ -394,7 +399,11 @@ public struct LanguageModelRouter: WorkflowLanguageModel {
                 throw CancellationError()
             } catch {
                 let failure = WorkflowFailure(error: error)
-                let decision = route.decision(after: failure)
+                // Another route would repeat tools that already ran here.
+                let decision: LanguageModelFallbackDecision =
+                    sideEffects.hasRecordedSideEffects
+                    ? .stop
+                    : route.decision(after: failure)
                 attempts.append(
                     LanguageModelRoutingAttempt(
                         provider: route.provider,

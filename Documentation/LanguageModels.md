@@ -84,8 +84,10 @@ let local = try OpenAICompatibleLanguageModel(
 )
 ```
 
-The bundled transport uses an isolated session without shared cache, cookies,
-or credential storage and follows only same-origin redirects. Injecting a
+The bundled transport uses a single process-wide session without cache,
+cookies, or credential storage and follows only same-origin redirects. Every
+adapter created without an explicit transport shares it, so constructing
+adapters per request does not accumulate sessions. Injecting a
 custom `URLSession` or `HTTPModelTransport` transfers those security decisions
 to the application. Request, response, streaming-event, total-stream, and event
 count limits are enforced through `HTTPModelResourceLimits`.
@@ -121,6 +123,19 @@ Incompatible declared routes are skipped before invocation. Their routing
 attempt records `missingCapabilities`. Routes that omit capabilities remain
 `.unspecified`, preserving normal attempt-and-fallback behavior. This is useful
 for migration and deterministic fallback responses.
+
+### Fallback after tools have run
+
+A route can execute tools itself, for example a `ToolCallingLanguageModel`
+used as a route or an `AppleFoundationModel` with workflow tool registrations.
+If such a route fails after a tool that may change state has started, the
+router stops with `.stopped(provider:)` instead of trying the next route,
+regardless of the route's `onFailure` decision, because the next route would
+run the tool again. Tools whose metadata declares only `.readOnly`,
+`.localComputation`, or `.externalRead` effects do not stop fallback; tools
+without declared effects are treated as state-changing. Wrapping the router in
+a single `ToolCallingLanguageModel` keeps tool execution outside routing
+entirely.
 
 ## Typed structured output
 
@@ -252,9 +267,16 @@ transport does. Streaming tool calls are not currently supported; ordinary
 non-streaming tool loops remain available. Provider-internal HTTP retries are
 not attempted once streaming begins.
 
+A stream completes only after the provider's terminal event: `[DONE]` or a
+finish reason for Chat Completions, `response.completed` or
+`response.incomplete` for Responses, and `message_stop` for Anthropic. A
+stream that closes early or reports an error event fails with
+`invalidResponse` instead of returning partial text as a complete response.
+
 `LanguageModelRouter` is also streaming-aware. It may advance to another route
-only if the failed provider has emitted no text. After the first delta, routing
-stops on failure so an application never receives text mixed from two models.
+only if the failed provider has emitted no text and started no state-changing
+tool. After the first delta, routing stops on failure so an application never
+receives text mixed from two models.
 
 ## Usage and finish reasons
 

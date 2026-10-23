@@ -124,7 +124,7 @@ Alternatively, add SwiftOrc to a Swift package:
 dependencies: [
     .package(
         url: "https://github.com/chloke/SwiftOrc.git",
-        from: "0.1.0"
+        from: "0.5.0"
     )
 ]
 ```
@@ -233,11 +233,6 @@ Swift tools 6.3, so consuming applications must be built with a compatible Swift
 toolchain even when they deploy to iOS 16 or macOS 13.
 
 ## Versioning
-
-SwiftOrc follows semantic versioning. Before 1.0, minor releases may refine
-the public API as real applications exercise it; changes that require source
-updates will be called out in `CHANGELOG.md`. Patch releases should remain
-source-compatible and focus on fixes and documentation.
 
 Applications should depend on a tagged release instead of a moving branch.
 

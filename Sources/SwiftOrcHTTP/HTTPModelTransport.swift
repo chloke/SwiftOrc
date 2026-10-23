@@ -93,15 +93,21 @@ public struct HTTPModelResourceLimits: Sendable, Equatable {
 
 /// The production transport backed by `URLSession`.
 public struct URLSessionHTTPModelTransport: HTTPStreamingModelTransport {
-    private let session: URLSession
+    let session: URLSession
     private let limits: HTTPModelResourceLimits
 
-    /// Creates an isolated session with no shared cookies, credentials, or
-    /// cache. Redirects are restricted to the request's original origin.
+    /// Uses a process-wide session with no cookies, credentials, or cache.
+    /// Redirects are restricted to the request's original origin.
+    ///
+    /// The session is shared because a `URLSession` with a delegate is never
+    /// released until it is invalidated; creating one per transport would
+    /// leak a session for every adapter an application constructs.
     public init(limits: HTTPModelResourceLimits = .default) {
         self.limits = limits
-        session = Self.makeSecureSession()
+        session = Self.sharedSecureSession
     }
+
+    private static let sharedSecureSession = makeSecureSession()
 
     /// Uses an application-owned session. The application is responsible for
     /// its cache, cookie, credential, TLS, and redirect policies.

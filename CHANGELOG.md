@@ -1,8 +1,43 @@
 # Changelog
 
-Notable changes to SwiftOrc are documented here. The project follows
-semantic versioning; until 1.0, minor releases may include source-breaking API
-refinements when they are clearly documented.
+Notable changes to SwiftOrc are documented here.
+
+## 0.5.0 - 2026-10-23
+
+### Fixed
+
+- Anthropic streams that report an `error` event, or end without
+  `message_stop`, now fail with `invalidResponse` instead of returning partial
+  text as a complete response.
+- OpenAI-compatible streams that end without `[DONE]` or a finish reason now
+  fail with `invalidResponse` instead of returning truncated output.
+- `LanguageModelRouter` and its streaming variant no longer fall back to
+  another route after a state-changing tool started inside the failed route,
+  which previously ran the tool a second time. Tools whose metadata declares
+  only read-only or computational effects still allow fallback.
+- `AppleFoundationModel` workflow tool registrations now enforce a
+  `maximumToolCalls` limit (default 32). Apple's tool loop previously had no
+  bound on tool calls.
+- Tool timeouts are enforced even when a tool ignores cancellation. Abandoned
+  work keeps its concurrency permit until it stops.
+- Anthropic requests keep tool definitions, with a `none` tool choice, when
+  tools are disabled but the conversation contains tool history. Previously,
+  denying every tool with `.returnToModel` produced a request Anthropic
+  rejects.
+- `URLSessionHTTPModelTransport()` shares one process-wide session instead of
+  creating a delegate-backed session that was never released for every
+  adapter.
+- `HTTPModelRetryPolicy` retries HTTP 529 (Anthropic "overloaded") by default.
+
+### Compatibility
+
+- `AppleFoundationModel(workflowToolRegistrations:)` gains a defaulted
+  `maximumToolCalls` parameter. A single request that previously made more
+  than 32 Apple tool calls now fails; pass a higher value, or `.max` to remove
+  the bound.
+- Existing public enums gain no new cases.
+- `LanguageModelToolChoice.none` on an Anthropic request with tools now sends
+  the tools with `tool_choice: {"type": "none"}` instead of omitting them.
 
 ## 0.4.0 - 2026-08-12
 

@@ -24,7 +24,8 @@ struct AppleBridgedToolDefinition: Sendable {
         recorder: AppleToolExecutionRecorder,
         executor: LanguageModelToolExecutor,
         authorization: LanguageModelToolAuthorization? = nil,
-        denialBehavior: LanguageModelToolDenialBehavior = .failWorkflow
+        denialBehavior: LanguageModelToolDenialBehavior = .failWorkflow,
+        sideEffects: LanguageModelToolSideEffectTracker? = nil
     ) -> AppleBridgedTool {
         AppleBridgedTool(
             name: name,
@@ -33,7 +34,8 @@ struct AppleBridgedToolDefinition: Sendable {
             executor: executor,
             authorization: authorization,
             denialBehavior: denialBehavior,
-            recorder: recorder
+            recorder: recorder,
+            sideEffects: sideEffects
         )
     }
 }
@@ -50,24 +52,30 @@ struct AppleBridgedTool: Tool {
     let authorization: LanguageModelToolAuthorization?
     let denialBehavior: LanguageModelToolDenialBehavior
     let recorder: AppleToolExecutionRecorder
+    /// Captured when the request starts, because Apple's tool loop may not
+    /// call tools from a task that inherits the router's task-local value.
+    let sideEffects: LanguageModelToolSideEffectTracker?
 
     func call(arguments: GeneratedContent) async throws -> String {
         let callID = UUID().uuidString
-        let callNumber = await recorder.started(tool: name)
+        let callNumber = try await recorder.started(tool: name)
         do {
-            let output = try await executor.execute(
-                LanguageModelToolCall(
-                    id: callID,
-                    name: name,
-                    arguments: arguments.jsonString
-                ),
-                context: LanguageModelToolExecutionContext(
-                    round: 0,
-                    callNumber: callNumber,
-                    provider: AppleFoundationModel.providerIdentifier
-                ),
-                authorization: authorization
-            )
+            let output = try await LanguageModelToolSideEffectTracker.$current
+                .withValue(sideEffects) {
+                    try await executor.execute(
+                        LanguageModelToolCall(
+                            id: callID,
+                            name: name,
+                            arguments: arguments.jsonString
+                        ),
+                        context: LanguageModelToolExecutionContext(
+                            round: 0,
+                            callNumber: callNumber,
+                            provider: AppleFoundationModel.providerIdentifier
+                        ),
+                        authorization: authorization
+                    )
+                }
             await recorder.completed(callNumber: callNumber, tool: name)
             return output
         } catch let error as LanguageModelToolPolicyError
@@ -89,13 +97,25 @@ struct AppleBridgedTool: Tool {
 actor AppleToolExecutionRecorder {
     private(set) var executions: [LanguageModelToolExecutionRecord] = []
     private var nextCallNumber = 1
+    private let maximumCalls: Int
     private let onEvent: LanguageModelToolEventHandler?
 
-    init(onEvent: LanguageModelToolEventHandler?) {
+    init(
+        onEvent: LanguageModelToolEventHandler?,
+        maximumCalls: Int = .max
+    ) {
         self.onEvent = onEvent
+        self.maximumCalls = maximumCalls
     }
 
-    func started(tool: String) async -> Int {
+    /// Apple's tool loop has no call limit of its own, so the recorder
+    /// refuses calls beyond the configured maximum.
+    func started(tool: String) async throws -> Int {
+        guard nextCallNumber <= maximumCalls else {
+            throw ToolCallingLanguageModelError.maximumToolCallsExceeded(
+                maximumCalls
+            )
+        }
         let callNumber = nextCallNumber
         nextCallNumber += 1
         await onEvent?(

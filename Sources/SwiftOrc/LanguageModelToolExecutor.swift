@@ -242,32 +242,28 @@ package struct LanguageModelToolExecutor: Sendable {
             }
         }
 
-        let permitID = UUID()
-        try await withTaskCancellationHandler {
-            try await permits.acquire(id: permitID)
-        } onCancel: {
-            Task { await permits.cancel(id: permitID) }
+        if LanguageModelToolSideEffectTracker.mayHaveSideEffects(
+            registration.metadata
+        ) {
+            LanguageModelToolSideEffectTracker.current?.recordSideEffect()
         }
 
-        do {
-            let output = try await executeAttempts(
-                registration,
-                call: call,
-                context: context
+        let output = try await executeAttempts(
+            registration,
+            call: call,
+            context: context
+        )
+        guard output.utf8.count <= maximumOutputBytes else {
+            throw ToolCallingLanguageModelError.toolOutputTooLarge(
+                maximum: maximumOutputBytes
             )
-            guard output.utf8.count <= maximumOutputBytes else {
-                throw ToolCallingLanguageModelError.toolOutputTooLarge(
-                    maximum: maximumOutputBytes
-                )
-            }
-            await permits.release()
-            return output
-        } catch {
-            await permits.release()
-            throw error
         }
+        return output
     }
 
+    /// Runs attempts while holding one concurrency permit per attempt. Every
+    /// exit path releases the permit, except that a timed-out or cancelled
+    /// tool keeps it until its abandoned work actually finishes.
     private func executeAttempts(
         _ registration: LanguageModelToolRegistration,
         call: LanguageModelToolCall,
@@ -277,79 +273,172 @@ package struct LanguageModelToolExecutor: Sendable {
         var attempt = 1
 
         while true {
-            try Task.checkCancellation()
-            do {
-                return try await executeAttempt(
-                    registration,
-                    arguments: call.arguments
-                )
-            } catch is CancellationError {
+            try await acquirePermit()
+            guard !Task.isCancelled else {
+                await permits.release()
                 throw CancellationError()
-            } catch {
-                try Task.checkCancellation()
-                guard attempt < retry.maximumAttempts else { throw error }
-                let failure = WorkflowFailure(error: error)
-                if let shouldRetry = retry.shouldRetry {
-                    let retryAllowed = await shouldRetry(
-                        LanguageModelToolRetryRequest(
-                            tool: call.name,
-                            attempt: attempt,
-                            failure: failure
-                        )
-                    )
-                    guard retryAllowed else { throw error }
-                }
-                try Task.checkCancellation()
+            }
 
-                attempt += 1
-                await onEvent?(
-                    .retryScheduled(
-                        round: context.round,
-                        callNumber: context.callNumber,
+            let error: any Error
+            switch await executeAttempt(registration, arguments: call.arguments) {
+            case let .finished(.success(output)):
+                await permits.release()
+                return output
+            case let .finished(.failure(failure)):
+                await permits.release()
+                error = failure
+            case let .timedOut(work):
+                releasePermit(afterAbandoning: work)
+                error = LanguageModelToolPolicyError.timedOut(
+                    tool: registration.definition.name
+                )
+            case let .cancelled(work):
+                releasePermit(afterAbandoning: work)
+                throw CancellationError()
+            }
+
+            if error is CancellationError { throw CancellationError() }
+            try Task.checkCancellation()
+            guard attempt < retry.maximumAttempts else { throw error }
+            let failure = WorkflowFailure(error: error)
+            if let shouldRetry = retry.shouldRetry {
+                let retryAllowed = await shouldRetry(
+                    LanguageModelToolRetryRequest(
                         tool: call.name,
-                        nextAttempt: attempt
+                        attempt: attempt,
+                        failure: failure
                     )
                 )
-                if retry.delay > .zero {
-                    try await Task.sleep(for: retry.delay)
-                }
+                guard retryAllowed else { throw error }
+            }
+            try Task.checkCancellation()
+
+            attempt += 1
+            await onEvent?(
+                .retryScheduled(
+                    round: context.round,
+                    callNumber: context.callNumber,
+                    tool: call.name,
+                    nextAttempt: attempt
+                )
+            )
+            if retry.delay > .zero {
+                try await Task.sleep(for: retry.delay)
             }
         }
     }
 
+    private func acquirePermit() async throws {
+        let permitID = UUID()
+        try await withTaskCancellationHandler {
+            try await permits.acquire(id: permitID)
+        } onCancel: {
+            Task { await permits.cancel(id: permitID) }
+        }
+    }
+
+    private func releasePermit(
+        afterAbandoning work: Task<String, any Error>
+    ) {
+        work.cancel()
+        let permits = permits
+        Task {
+            _ = await work.result
+            await permits.release()
+        }
+    }
+
+    /// Runs one attempt. With a timeout, the tool runs in its own task so the
+    /// deadline is honored even when the tool ignores cancellation.
     private func executeAttempt(
         _ registration: LanguageModelToolRegistration,
         arguments: String
-    ) async throws -> String {
+    ) async -> LanguageModelToolAttemptOutcome {
         guard let timeout = registration.policy.timeout else {
-            return try await registration.tool.call(arguments: arguments)
+            do {
+                return .finished(
+                    .success(try await registration.tool.call(arguments: arguments))
+                )
+            } catch {
+                return .finished(.failure(error))
+            }
         }
 
-        do {
-            return try await withThrowingTaskGroup(of: String.self) { group in
-                group.addTask {
-                    try await registration.tool.call(arguments: arguments)
-                }
-                group.addTask {
-                    try await Task.sleep(for: timeout)
-                    throw LanguageModelToolTimeoutMarker.expired
-                }
-                defer { group.cancelAll() }
-                guard let result = try await group.next() else {
-                    throw CancellationError()
-                }
-                return result
+        let work = Task {
+            try await registration.tool.call(arguments: arguments)
+        }
+        let race = LanguageModelToolAttemptRace()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                race.install(continuation)
+                Task { race.resolve(.finished(await work.result)) }
+                race.setTimer(
+                    Task {
+                        guard (try? await Task.sleep(for: timeout)) != nil else {
+                            return
+                        }
+                        race.resolve(.timedOut(work))
+                    }
+                )
             }
-        } catch LanguageModelToolTimeoutMarker.expired {
-            throw LanguageModelToolPolicyError.timedOut(
-                tool: registration.definition.name
-            )
+        } onCancel: {
+            race.resolve(.cancelled(work))
         }
     }
 }
 
-private enum LanguageModelToolTimeoutMarker: Error {
-    case expired
+private enum LanguageModelToolAttemptOutcome: Sendable {
+    case finished(Result<String, any Error>)
+    case timedOut(Task<String, any Error>)
+    case cancelled(Task<String, any Error>)
+}
+
+/// Delivers whichever of completion, timeout, or cancellation happens first.
+private final class LanguageModelToolAttemptRace: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<LanguageModelToolAttemptOutcome, Never>?
+    private var outcome: LanguageModelToolAttemptOutcome?
+    private var timer: Task<Void, Never>?
+
+    func install(
+        _ continuation: CheckedContinuation<LanguageModelToolAttemptOutcome, Never>
+    ) {
+        lock.lock()
+        if let outcome {
+            lock.unlock()
+            continuation.resume(returning: outcome)
+        } else {
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    func setTimer(_ timer: Task<Void, Never>) {
+        lock.lock()
+        if outcome == nil {
+            self.timer = timer
+            lock.unlock()
+        } else {
+            lock.unlock()
+            timer.cancel()
+        }
+    }
+
+    func resolve(_ outcome: LanguageModelToolAttemptOutcome) {
+        lock.lock()
+        guard self.outcome == nil else {
+            lock.unlock()
+            return
+        }
+        self.outcome = outcome
+        let continuation = self.continuation
+        let timer = self.timer
+        self.continuation = nil
+        self.timer = nil
+        lock.unlock()
+        timer?.cancel()
+        continuation?.resume(returning: outcome)
+    }
 }
 
 private actor LanguageModelToolPermitPool {

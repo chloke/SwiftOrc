@@ -109,21 +109,25 @@ private extension LanguageModelRouter {
             foundEligibleProvider = true
             await onEvent?(.started(provider: route.provider))
             var emittedText = false
+            let sideEffects = LanguageModelToolSideEffectTracker()
 
             do {
                 var completedResponse: LanguageModelResponse?
-                for try await event in model.stream(request) {
-                    try Task.checkCancellation()
-                    switch event {
-                    case let .textDelta(delta):
-                        if !delta.isEmpty {
-                            emittedText = true
-                            continuation.yield(.textDelta(delta))
+                try await LanguageModelToolSideEffectTracker.$current
+                    .withValue(sideEffects) {
+                        for try await event in model.stream(request) {
+                            try Task.checkCancellation()
+                            switch event {
+                            case let .textDelta(delta):
+                                if !delta.isEmpty {
+                                    emittedText = true
+                                    continuation.yield(.textDelta(delta))
+                                }
+                            case let .completed(response):
+                                completedResponse = response
+                            }
                         }
-                    case let .completed(response):
-                        completedResponse = response
                     }
-                }
                 guard var response = completedResponse else {
                     throw LanguageModelStreamingError.missingCompletion
                 }
@@ -157,7 +161,7 @@ private extension LanguageModelRouter {
             } catch {
                 let failure = WorkflowFailure(error: error)
                 let decision: LanguageModelFallbackDecision =
-                    emittedText
+                    emittedText || sideEffects.hasRecordedSideEffects
                     ? .stop
                     : route.decision(after: failure)
                 attempts.append(

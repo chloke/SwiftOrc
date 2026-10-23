@@ -533,6 +533,7 @@ public struct OpenAICompatibleLanguageModel: StreamingWorkflowLanguageModel {
         var responseModel: String?
         var finishReason: LanguageModelFinishReason?
         var usage: LanguageModelUsage?
+        var receivedTerminalEvent = false
 
         for try await line in response.lines {
             try Task.checkCancellation()
@@ -562,7 +563,10 @@ public struct OpenAICompatibleLanguageModel: StreamingWorkflowLanguageModel {
             let payload = line.dropFirst(5).trimmingCharacters(
                 in: .whitespaces
             )
-            guard payload != "[DONE]" else { break }
+            guard payload != "[DONE]" else {
+                receivedTerminalEvent = true
+                break
+            }
             guard let data = payload.data(using: .utf8) else { continue }
 
             let chunk: ChatCompletionStreamChunk
@@ -587,6 +591,7 @@ public struct OpenAICompatibleLanguageModel: StreamingWorkflowLanguageModel {
             }
             if let reason = chunk.choices.first?.finishReason {
                 finishReason = LanguageModelFinishReason(rawValue: reason)
+                receivedTerminalEvent = true
             }
             if let chunkUsage = chunk.usage {
                 usage = LanguageModelUsage(
@@ -595,6 +600,14 @@ public struct OpenAICompatibleLanguageModel: StreamingWorkflowLanguageModel {
                     totalTokens: chunkUsage.totalTokens
                 )
             }
+        }
+
+        // A connection that closes without a finish reason or `[DONE]` may
+        // have truncated the output, so it is not reported as a completion.
+        guard receivedTerminalEvent else {
+            throw OpenAICompatibleLanguageModelError.invalidResponse(
+                "The stream ended before the provider reported completion."
+            )
         }
 
         var metadata = ["http.status": String(response.statusCode)]
