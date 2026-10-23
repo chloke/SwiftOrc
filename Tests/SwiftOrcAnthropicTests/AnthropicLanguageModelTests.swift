@@ -155,3 +155,172 @@ func streamsAnthropicTextDeltas() async throws {
     #expect(result.finishReason == .stop)
     #expect(result.usage == LanguageModelUsage(inputTokens: 4, outputTokens: 2, totalTokens: 6))
 }
+
+private actor SequencedTransport: HTTPModelTransport {
+    private var responses: [HTTPModelTransportResponse]
+    private(set) var requests: [URLRequest] = []
+
+    init(_ responses: [HTTPModelTransportResponse]) { self.responses = responses }
+
+    func send(_ request: URLRequest) async throws -> HTTPModelTransportResponse {
+        requests.append(request)
+        return responses.removeFirst()
+    }
+}
+
+private func streamingModel(_ lines: [String]) throws -> AnthropicLanguageModel {
+    try AnthropicLanguageModel(
+        modelIdentifier: "claude-test",
+        headers: .anthropicAPIKey("secret"),
+        retryPolicy: .none,
+        transport: StreamingTransport(lines: lines)
+    )
+}
+
+private func expectStreamFailure(
+    _ model: AnthropicLanguageModel
+) async throws {
+    do {
+        for try await _ in model.stream(LanguageModelRequest(prompt: "Hi")) {}
+        Issue.record("Expected the incomplete stream to fail")
+    } catch let error as AnthropicLanguageModelError {
+        guard case .invalidResponse = error else {
+            Issue.record("Unexpected error: \(error)")
+            return
+        }
+    }
+}
+
+@Test
+func anthropicStreamErrorAfterPartialTextFails() async throws {
+    try await expectStreamFailure(
+        streamingModel([
+            #"data: {"type":"message_start","message":{"id":"msg-3","model":"claude-test"}}"#,
+            #"data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Partial"}}"#,
+            #"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+        ])
+    )
+}
+
+@Test
+func anthropicStreamWithoutMessageStopFails() async throws {
+    try await expectStreamFailure(
+        streamingModel([
+            #"data: {"type":"message_start","message":{"id":"msg-4","model":"claude-test"}}"#,
+            #"data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Partial"}}"#,
+        ])
+    )
+}
+
+@Test
+func anthropicKeepsToolDefinitionsForToolHistoryWhenToolsAreDisabled() async throws {
+    let transport = RecordingTransport(response: response())
+    let model = try AnthropicLanguageModel(
+        modelIdentifier: "claude-test",
+        headers: .anthropicAPIKey("secret"),
+        retryPolicy: .none,
+        transport: transport
+    )
+
+    // The shape ToolCallingLanguageModel sends after every tool was denied.
+    _ = try await model.generate(
+        LanguageModelRequest(
+            prompt: "Hello",
+            messages: [
+                .assistant(
+                    content: nil,
+                    toolCalls: [
+                        LanguageModelToolCall(id: "call-1", name: "lookup", arguments: "{}")
+                    ]
+                ),
+                .tool(callID: "call-1", content: #"{"error":"denied"}"#),
+            ],
+            toolChoice: LanguageModelToolChoice.none
+        )
+    )
+
+    let body = try #require(await transport.requests.first?.httpBody)
+    let json = try #require(
+        try JSONSerialization.jsonObject(with: body) as? [String: Any]
+    )
+    let tools = try #require(json["tools"] as? [[String: Any]])
+    #expect(tools.map { $0["name"] as? String } == ["lookup"])
+    let choice = try #require(json["tool_choice"] as? [String: Any])
+    #expect(choice["type"] as? String == "none")
+    #expect(choice["disable_parallel_tool_use"] == nil)
+}
+
+@Test
+func anthropicSendsDisabledToolsWithNoneChoice() async throws {
+    let transport = RecordingTransport(response: response())
+    let model = try AnthropicLanguageModel(
+        modelIdentifier: "claude-test",
+        headers: .anthropicAPIKey("secret"),
+        retryPolicy: .none,
+        transport: transport
+    )
+
+    _ = try await model.generate(
+        LanguageModelRequest(
+            prompt: "Hello",
+            tools: [
+                LanguageModelToolDefinition(
+                    name: "lookup",
+                    description: "Looks up a record.",
+                    parameters: .objectSchema(properties: [:], required: [])
+                )
+            ],
+            toolChoice: LanguageModelToolChoice.none
+        )
+    )
+
+    let body = try #require(await transport.requests.first?.httpBody)
+    let json = try #require(
+        try JSONSerialization.jsonObject(with: body) as? [String: Any]
+    )
+    #expect((json["tools"] as? [[String: Any]])?.count == 1)
+    let choice = try #require(json["tool_choice"] as? [String: Any])
+    #expect(choice["type"] as? String == "none")
+}
+
+@Test
+func anthropicOmitsToolsWhenNoneAreOfferedOrInHistory() async throws {
+    let transport = RecordingTransport(response: response())
+    let model = try AnthropicLanguageModel(
+        modelIdentifier: "claude-test",
+        headers: .anthropicAPIKey("secret"),
+        retryPolicy: .none,
+        transport: transport
+    )
+
+    _ = try await model.generate(LanguageModelRequest(prompt: "Hello"))
+
+    let body = try #require(await transport.requests.first?.httpBody)
+    let json = try #require(
+        try JSONSerialization.jsonObject(with: body) as? [String: Any]
+    )
+    #expect(json["tools"] == nil)
+    #expect(json["tool_choice"] == nil)
+}
+
+@Test
+func anthropicRetriesOverloadedStatusByDefault() async throws {
+    let transport = SequencedTransport([
+        HTTPModelTransportResponse(
+            data: Data(#"{"type":"error","error":{"type":"overloaded_error"}}"#.utf8),
+            statusCode: 529
+        ),
+        response(),
+    ])
+    let model = try AnthropicLanguageModel(
+        modelIdentifier: "claude-test",
+        headers: .anthropicAPIKey("secret"),
+        transport: transport,
+        sleep: { _ in }
+    )
+
+    let result = try await model.generate(LanguageModelRequest(prompt: "Hello"))
+
+    #expect(result.content == "Hello")
+    #expect(await transport.requests.count == 2)
+}

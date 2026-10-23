@@ -363,3 +363,87 @@ func appleAdapterExplicitlyRejectsImageInput() throws {
         #expect(error == .unsupportedInput(kind: "image"))
     }
 }
+
+@Test
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+func bridgedToolsStopAtMaximumToolCalls() async throws {
+    let registration = LanguageModelToolRegistration(tool: addTool())
+    let definition = try AppleBridgedToolDefinition(
+        definition: registration.definition
+    )
+    let recorder = AppleToolExecutionRecorder(onEvent: nil, maximumCalls: 2)
+    let executor = try LanguageModelToolExecutor(registrations: [registration])
+    let tool = definition.makeTool(recorder: recorder, executor: executor)
+    let arguments = try GeneratedContent(json: #"{"left":1,"right":2}"#)
+
+    _ = try await tool.call(arguments: arguments)
+    _ = try await tool.call(arguments: arguments)
+    do {
+        _ = try await tool.call(arguments: arguments)
+        Issue.record("Expected the third call to exceed the limit")
+    } catch let error as ToolCallingLanguageModelError {
+        #expect(error == .maximumToolCallsExceeded(2))
+    }
+    #expect(await recorder.executions.count == 2)
+}
+
+@Test
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+func rejectsInvalidAppleMaximumToolCalls() throws {
+    do {
+        _ = try AppleFoundationModel(
+            workflowToolRegistrations: [
+                LanguageModelToolRegistration(tool: addTool())
+            ],
+            maximumToolCalls: 0
+        )
+        Issue.record("Expected the invalid limit to be rejected")
+    } catch let error as ToolCallingLanguageModelConfigurationError {
+        #expect(error == .invalidMaximumToolCalls)
+    }
+}
+
+@Test
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+func bridgedToolsRecordSideEffectsOnCapturedRouterTracker() async throws {
+    let registration = LanguageModelToolRegistration(tool: addTool())
+    let definition = try AppleBridgedToolDefinition(
+        definition: registration.definition
+    )
+    let executor = try LanguageModelToolExecutor(registrations: [registration])
+    let tracker = LanguageModelToolSideEffectTracker(parent: nil)
+    let tool = definition.makeTool(
+        recorder: AppleToolExecutionRecorder(onEvent: nil),
+        executor: executor,
+        sideEffects: tracker
+    )
+
+    // Called outside the tracker's task-local scope, as Apple's tool loop may.
+    _ = try await tool.call(
+        arguments: try GeneratedContent(json: #"{"left":1,"right":2}"#)
+    )
+
+    #expect(tracker.hasRecordedSideEffects)
+}
+
+@Test
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+func appleToolCallLimitCanBeEffectivelyUnlimited() async throws {
+    _ = try AppleFoundationModel(
+        workflowToolRegistrations: [LanguageModelToolRegistration(tool: addTool())],
+        maximumToolCalls: .max
+    )
+    let registration = LanguageModelToolRegistration(tool: addTool())
+    let definition = try AppleBridgedToolDefinition(definition: registration.definition)
+    let recorder = AppleToolExecutionRecorder(onEvent: nil, maximumCalls: .max)
+    let tool = definition.makeTool(
+        recorder: recorder,
+        executor: try LanguageModelToolExecutor(registrations: [registration])
+    )
+    let arguments = try GeneratedContent(json: #"{"left":1,"right":2}"#)
+
+    for _ in 0..<100 {
+        _ = try await tool.call(arguments: arguments)
+    }
+    #expect(await recorder.executions.count == 100)
+}

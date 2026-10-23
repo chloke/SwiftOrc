@@ -368,6 +368,7 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
         var stopReason: String?
         var streamedBytes = 0
         var streamedEvents = 0
+        var receivedMessageStop = false
         for try await line in stream.lines {
             try Task.checkCancellation()
             let lineBytes = line.utf8.count
@@ -413,7 +414,21 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
             } else if event.type == "message_delta" {
                 stopReason = event.delta?.stopReason ?? stopReason
                 outputTokens = event.usage?.outputTokens ?? outputTokens
+            } else if event.type == "message_stop" {
+                receivedMessageStop = true
+                break
+            } else if event.type == "error" {
+                // An error after partial output must not be reported as a
+                // complete response.
+                throw AnthropicLanguageModelError.invalidResponse(
+                    "The stream reported an error before completion."
+                )
             }
+        }
+        guard receivedMessageStop else {
+            throw AnthropicLanguageModelError.invalidResponse(
+                "The stream ended before message_stop."
+            )
         }
         guard !content.isEmpty else {
             throw AnthropicLanguageModelError.invalidResponse(
@@ -502,16 +517,26 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
             messages.append(try makeMessage(message))
         }
 
-        let disablesTools = request.toolChoice == LanguageModelToolChoice.none
-        let tools =
-            request.tools.isEmpty || disablesTools
-            ? nil
+        // Tool definitions stay attached when tools are disabled, because
+        // Anthropic rejects tool history without them. A `none` choice keeps
+        // the model from calling any of them.
+        let disablesTools =
+            request.toolChoice == LanguageModelToolChoice.none
+            || request.tools.isEmpty
+        let definitions =
+            request.tools.isEmpty
+            ? Self.toolNamesInHistory(request.messages).map {
+                AnthropicTool(unavailableToolNamed: $0)
+            }
             : request.tools.map(AnthropicTool.init)
+        let tools = definitions.isEmpty ? nil : definitions
         let choice =
             tools == nil
             ? nil
             : AnthropicToolChoice(
-                request.toolChoice ?? .automatic,
+                disablesTools
+                    ? LanguageModelToolChoice.none
+                    : request.toolChoice ?? .automatic,
                 parallelToolCalls: request.parallelToolCalls
             )
         return AnthropicRequestBody(
@@ -768,6 +793,19 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
         in headers: [String: String]
     ) -> String? {
         headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
+    }
+
+    private static func toolNamesInHistory(
+        _ messages: [LanguageModelMessage]
+    ) -> [String] {
+        var seen: Set<String> = []
+        var names: [String] = []
+        for case let .assistant(_, toolCalls) in messages {
+            for call in toolCalls where seen.insert(call.name).inserted {
+                names.append(call.name)
+            }
+        }
+        return names
     }
 
     private static func nonEmpty(_ value: String?) -> String? {

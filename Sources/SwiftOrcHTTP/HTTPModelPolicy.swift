@@ -18,7 +18,8 @@ public struct HTTPModelRetryPolicy: Sendable, Equatable {
         maximumAttempts: Int = 2,
         baseDelaySeconds: Double = 0.5,
         maximumDelaySeconds: Double = 8,
-        retryableStatusCodes: Set<Int> = [408, 429, 500, 502, 503, 504]
+        // 529 is Anthropic's "overloaded" status.
+        retryableStatusCodes: Set<Int> = [408, 429, 500, 502, 503, 504, 529]
     ) {
         self.maximumAttempts = maximumAttempts
         self.baseDelaySeconds = baseDelaySeconds

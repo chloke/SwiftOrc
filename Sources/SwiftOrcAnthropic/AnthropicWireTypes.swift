@@ -122,6 +122,17 @@ struct AnthropicTool: Encodable {
         strict = definition.strict
     }
 
+    /// A placeholder for a tool that appears in conversation history but is
+    /// no longer offered. Anthropic requires tool definitions whenever a
+    /// request contains `tool_use` or `tool_result` blocks; it is only ever
+    /// sent with a `none` tool choice, so the model cannot call it.
+    init(unavailableToolNamed name: String) {
+        self.name = name
+        description = "This tool is unavailable for this request."
+        inputSchema = .object(["type": .string("object")])
+        strict = false
+    }
+
     enum CodingKeys: String, CodingKey {
         case name
         case description
@@ -136,10 +147,14 @@ struct AnthropicToolChoice: Encodable {
     let disableParallelToolUse: Bool?
 
     init(_ choice: LanguageModelToolChoice, parallelToolCalls: Bool?) {
-        disableParallelToolUse = parallelToolCalls.map { !$0 }
+        disableParallelToolUse =
+            choice == .none ? nil : parallelToolCalls.map { !$0 }
         switch choice {
-        case .automatic, .none:
+        case .automatic:
             type = "auto"
+            name = nil
+        case .none:
+            type = "none"
             name = nil
         case .required:
             type = "any"

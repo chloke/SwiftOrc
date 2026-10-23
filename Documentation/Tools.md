@@ -99,6 +99,14 @@ let model = try ToolCallingLanguageModel(
 )
 ```
 
+A tool timeout is enforced even when the tool ignores cancellation: the call
+fails with `LanguageModelToolPolicyError.timedOut` at the deadline and the tool
+receives cooperative cancellation. Work that keeps running regardless continues
+in the background and its result is discarded. It holds its concurrency permit
+until it actually stops, so `maximumConcurrentToolCalls` is never exceeded.
+Make tools that can time out idempotent, because the abandoned work may still
+complete its effect after the timeout is reported.
+
 Observe `approvals.updates()` in application state and resolve requests with
 `approve(_:)` or `deny(_:)`. Pending approvals contain raw untrusted arguments;
 do not copy them into telemetry or ordinary traces.
@@ -123,7 +131,15 @@ let apple = try AppleFoundationModel(
 ```
 
 The adapter converts supported provider-neutral schemas into Apple's generation
-schemas and enforces the same execution and access policies. Existing native
+schemas and enforces the same execution and access policies. Apple's tool loop
+has no call limit of its own, so the adapter's `maximumToolCalls` (32 by
+default, matching `ToolCallingLanguageModelConfiguration`) bounds the tool
+calls for one request; further calls fail with
+`ToolCallingLanguageModelError.maximumToolCallsExceeded`. The limit applies per
+request, not per conversation or app session. Agents that legitimately need
+more calls in one request can raise it, or pass `.max` to remove the bound;
+in that case cancel the request task or set a node timeout to stop runaway
+loops. Existing native
 `FoundationModels.Tool` implementations can instead use
 `AppleFoundationModel(nativeTools:)`. Native tools honor `toolChoice: .none`
 and request-scoped tool-name selection. Because native tools execute outside

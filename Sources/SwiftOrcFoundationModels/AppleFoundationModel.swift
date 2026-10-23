@@ -48,6 +48,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
     private let nativeTools: [any Tool]
     private let workflowTools: [AppleBridgedToolDefinition]
     private let toolExecutor: LanguageModelToolExecutor?
+    private let maximumToolCalls: Int
     private let onToolEvent: LanguageModelToolEventHandler?
 
     public init(
@@ -59,6 +60,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         nativeTools = []
         workflowTools = []
         toolExecutor = nil
+        maximumToolCalls = .max
         onToolEvent = nil
     }
 
@@ -74,6 +76,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         self.nativeTools = nativeTools
         workflowTools = []
         toolExecutor = nil
+        maximumToolCalls = .max
         onToolEvent = nil
     }
 
@@ -96,10 +99,16 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
 
     /// Bridges policy-aware workflow tool registrations into Apple's native
     /// tool loop.
+    ///
+    /// `maximumToolCalls` bounds the tool calls Apple's loop may make for one
+    /// request; further calls fail with
+    /// ``ToolCallingLanguageModelError/maximumToolCallsExceeded(_:)``.
     public init(
         model: SystemLanguageModel = .default,
         workflowToolRegistrations registrations: [LanguageModelToolRegistration],
         maximumConcurrentToolCalls: Int = 1,
+        maximumToolCalls: Int = ToolCallingLanguageModelConfiguration()
+            .maximumToolCalls,
         instructions: String? = nil,
         approvalHandler: LanguageModelToolApprovalHandler? = nil,
         onToolEvent: LanguageModelToolEventHandler? = nil
@@ -107,6 +116,10 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         guard maximumConcurrentToolCalls >= 1 else {
             throw AppleFoundationModelToolBridgeError
                 .invalidMaximumConcurrentToolCalls
+        }
+        guard maximumToolCalls >= 1 else {
+            throw ToolCallingLanguageModelConfigurationError
+                .invalidMaximumToolCalls
         }
         let executor = try LanguageModelToolExecutor(
             registrations: registrations,
@@ -123,6 +136,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
             )
         }
         toolExecutor = executor
+        self.maximumToolCalls = maximumToolCalls
         self.onToolEvent = onToolEvent
     }
 
@@ -155,7 +169,11 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         }
 
         let selectedNativeTools = try selectedNativeTools(for: request)
-        let recorder = AppleToolExecutionRecorder(onEvent: onToolEvent)
+        let recorder = AppleToolExecutionRecorder(
+            onEvent: onToolEvent,
+            maximumCalls: maximumToolCalls
+        )
+        let sideEffects = LanguageModelToolSideEffectTracker.current
         let bridgedTools: [AppleBridgedTool]
         if let toolExecutor {
             bridgedTools = try selectedWorkflowTools(for: request).map {
@@ -164,7 +182,8 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
                     executor: toolExecutor,
                     authorization: $0.authorization,
                     denialBehavior: request.toolAccessPolicy?.denialBehavior
-                        ?? .failWorkflow
+                        ?? .failWorkflow,
+                    sideEffects: sideEffects
                 )
             }
         } else {
@@ -219,7 +238,8 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
     public func stream(
         _ request: LanguageModelRequest
     ) -> AsyncThrowingStream<LanguageModelStreamEvent, any Error> {
-        AsyncThrowingStream { continuation in
+        let sideEffects = LanguageModelToolSideEffectTracker.current
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     guard request.messages.isEmpty else {
@@ -240,7 +260,10 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
                     }
 
                     let selectedNativeTools = try selectedNativeTools(for: request)
-                    let recorder = AppleToolExecutionRecorder(onEvent: onToolEvent)
+                    let recorder = AppleToolExecutionRecorder(
+                        onEvent: onToolEvent,
+                        maximumCalls: maximumToolCalls
+                    )
                     let bridgedTools: [AppleBridgedTool]
                     if let toolExecutor {
                         bridgedTools = try selectedWorkflowTools(for: request).map {
@@ -249,7 +272,8 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
                                 executor: toolExecutor,
                                 authorization: $0.authorization,
                                 denialBehavior: request.toolAccessPolicy?.denialBehavior
-                                    ?? .failWorkflow
+                                    ?? .failWorkflow,
+                                sideEffects: sideEffects
                             )
                         }
                     } else {
