@@ -332,6 +332,7 @@ private extension AppleFoundationModelAvailability.Reason {
         case .appleIntelligenceNotEnabled: " (Apple Intelligence is disabled)"
         case .modelNotReady: " (model not ready)"
         case .unknown: ""
+        @unknown default: ""
         }
     }
 }

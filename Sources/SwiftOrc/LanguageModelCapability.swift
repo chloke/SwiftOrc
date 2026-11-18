@@ -85,6 +85,7 @@ public extension LanguageModelRequest {
         requirements.insert(.textInput)
 
         if input.contains(where: \.containsImage)
+            || history.contains(where: \.containsImage)
             || messages.contains(where: \.containsImage)
         {
             requirements.insert(.imageInput)
@@ -93,7 +94,7 @@ public extension LanguageModelRequest {
             requirements.insert(.structuredOutput)
         }
         if !tools.isEmpty {
-            if case .some(.none) = toolChoice {
+            if case .some(.disabled) = toolChoice {
                 // Tool definitions are explicitly disabled for this request.
             } else {
                 requirements.insert(.toolCalling)
@@ -102,7 +103,7 @@ public extension LanguageModelRequest {
         if parallelToolCalls == true, requirements.contains(.toolCalling) {
             requirements.insert(.parallelToolCalling)
         }
-        if !messages.isEmpty {
+        if !messages.isEmpty || !history.isEmpty {
             requirements.insert(.conversationHistory)
         }
         return requirements

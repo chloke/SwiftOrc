@@ -15,18 +15,24 @@ public struct WorkflowContext: Sendable {
     /// itself is not included in workflow state or checkpoints.
     public let artifactStore: (any WorkflowArtifactStore)?
 
+    /// The answer to a node's input request. Set only for the first node that
+    /// runs after `resume(from:answering:)`.
+    public let inputResponse: WorkflowInputResponse?
+
     init(
         executionID: UUID,
         nodeID: NodeID,
         attempt: Int,
         step: Int,
-        artifactStore: (any WorkflowArtifactStore)?
+        artifactStore: (any WorkflowArtifactStore)?,
+        inputResponse: WorkflowInputResponse? = nil
     ) {
         self.executionID = executionID
         self.nodeID = nodeID
         self.attempt = attempt
         self.step = step
         self.artifactStore = artifactStore
+        self.inputResponse = inputResponse
     }
 
     /// Stores bytes without copying them into workflow state. When no source

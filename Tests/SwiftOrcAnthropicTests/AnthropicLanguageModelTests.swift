@@ -235,7 +235,7 @@ func anthropicKeepsToolDefinitionsForToolHistoryWhenToolsAreDisabled() async thr
                 ),
                 .tool(callID: "call-1", content: #"{"error":"denied"}"#),
             ],
-            toolChoice: LanguageModelToolChoice.none
+            toolChoice: LanguageModelToolChoice.disabled
         )
     )
 
@@ -270,7 +270,7 @@ func anthropicSendsDisabledToolsWithNoneChoice() async throws {
                     parameters: .objectSchema(properties: [:], required: [])
                 )
             ],
-            toolChoice: LanguageModelToolChoice.none
+            toolChoice: LanguageModelToolChoice.disabled
         )
     )
 
@@ -323,4 +323,70 @@ func anthropicRetriesOverloadedStatusByDefault() async throws {
 
     #expect(result.content == "Hello")
     #expect(await transport.requests.count == 2)
+}
+
+@Test
+func anthropicSendsHistoryBeforeThePrompt() async throws {
+    let transport = RecordingTransport(response: response())
+    let model = try AnthropicLanguageModel(
+        modelIdentifier: "claude-test",
+        headers: .anthropicAPIKey("secret"),
+        retryPolicy: .none,
+        transport: transport
+    )
+
+    _ = try await model.generate(
+        LanguageModelRequest(
+            prompt: "Now",
+            history: [
+                .user("Earlier"),
+                .assistant(
+                    content: nil,
+                    toolCalls: [LanguageModelToolCall(id: "t1", name: "lookup", arguments: "{}")]
+                ),
+                .tool(callID: "t1", content: "result"),
+                .assistant(content: "Reply", toolCalls: []),
+            ]
+        )
+    )
+
+    let body = try #require(await transport.requests.first?.httpBody)
+    let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+    let messages = try #require(json["messages"] as? [[String: Any]])
+    #expect(
+        messages.map { $0["role"] as? String } == [
+            "user", "assistant", "user", "assistant", "user",
+        ])
+    #expect(messages.last?["content"] as? String == "Now")
+    // Tool history in `history` also keeps placeholder definitions attached.
+    #expect((json["tools"] as? [[String: Any]])?.first?["name"] as? String == "lookup")
+}
+
+@Test
+func anthropicReportsPromptTooLong() async throws {
+    let transport = RecordingTransport(
+        response: HTTPModelTransportResponse(
+            data: Data(
+                #"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}"#
+                    .utf8
+            ),
+            statusCode: 400
+        )
+    )
+    let model = try AnthropicLanguageModel(
+        modelIdentifier: "claude-test",
+        headers: .anthropicAPIKey("secret"),
+        retryPolicy: .none,
+        transport: transport
+    )
+
+    await #expect(
+        throws: LanguageModelContextWindowExceeded(
+            provider: "anthropic",
+            maximumTokens: 200_000,
+            requestedTokens: 210_000
+        )
+    ) {
+        _ = try await model.generate(LanguageModelRequest(prompt: "Hi"))
+    }
 }

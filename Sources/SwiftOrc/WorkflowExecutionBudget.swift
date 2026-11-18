@@ -31,14 +31,18 @@ public struct WorkflowExecutionBudget: Sendable, Equatable {
 }
 
 /// A configuration error detected before budgeted execution starts.
+@nonexhaustive
 public enum WorkflowExecutionBudgetError: Error, Sendable, Equatable {
     case invalidMaximumNodeExecutions(Int)
 }
 
 /// Why a budgeted workflow yielded before reaching a finish transition.
+@nonexhaustive
 public enum WorkflowSuspensionReason: Sendable, Equatable, Codable {
     case maximumNodeExecutionsReached(limit: Int)
     case deadlineReached
+    /// A node asked for input. Resume with `resume(from:answering:)`.
+    case awaitingInput(WorkflowInputRequest)
 }
 
 /// Durable information required to continue a budgeted workflow.

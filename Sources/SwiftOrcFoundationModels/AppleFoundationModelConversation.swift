@@ -135,7 +135,7 @@ public actor AppleFoundationModelConversation: WorkflowLanguageModel {
     public func generate(
         _ request: LanguageModelRequest
     ) async throws -> LanguageModelResponse {
-        guard request.messages.isEmpty else {
+        guard request.messages.isEmpty, request.history.isEmpty else {
             throw AppleFoundationModelError.unsupportedInput(
                 kind: "explicit-conversation-history"
             )
@@ -163,7 +163,7 @@ public actor AppleFoundationModelConversation: WorkflowLanguageModel {
             try Task.checkCancellation()
             let content = try await session.respond(
                 to: prompt,
-                options: Self.options(from: request.options)
+                options: AppleFoundationModel.options(from: request.options)
             )
             await gate.release()
             return LanguageModelResponse(
@@ -172,32 +172,7 @@ public actor AppleFoundationModelConversation: WorkflowLanguageModel {
             )
         } catch {
             await gate.release()
-            throw error
-        }
-    }
-
-    private static func options(
-        from options: LanguageModelGenerationOptions
-    ) -> GenerationOptions {
-        GenerationOptions(
-            sampling: sampling(from: options.sampling),
-            temperature: options.temperature,
-            maximumResponseTokens: options.maximumResponseTokens
-        )
-    }
-
-    private static func sampling(
-        from sampling: LanguageModelSampling?
-    ) -> GenerationOptions.SamplingMode? {
-        switch sampling {
-        case nil:
-            nil
-        case .greedy:
-            .greedy
-        case let .randomTopK(k, seed):
-            .random(top: k, seed: seed)
-        case let .randomProbabilityThreshold(threshold, seed):
-            .random(probabilityThreshold: threshold, seed: seed)
+            throw AppleFoundationModel.mappingContextWindowError(error)
         }
     }
 }

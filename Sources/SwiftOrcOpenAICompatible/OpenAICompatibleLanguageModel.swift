@@ -11,6 +11,7 @@ public enum OpenAICompatibleInstructionRole: String, Sendable, Equatable,
 }
 
 /// Configuration errors rejected before the adapter can make a request.
+@nonexhaustive
 public enum OpenAICompatibleConfigurationError: Error, Sendable, Equatable {
     case emptyProviderIdentifier
     case emptyModelIdentifier
@@ -23,6 +24,7 @@ public enum OpenAICompatibleConfigurationError: Error, Sendable, Equatable {
 }
 
 /// Failures returned by an OpenAI-compatible Chat Completions provider.
+@nonexhaustive
 public enum OpenAICompatibleLanguageModelError: Error, Sendable, Equatable,
     CustomStringConvertible
 {
@@ -265,6 +267,17 @@ public struct OpenAICompatibleLanguageModel: StreamingWorkflowLanguageModel {
                     return result
                 }
 
+                if let overflow = contextWindowExceeded(response) {
+                    await onEvent?(
+                        .requestFailed(
+                            provider: providerIdentifier,
+                            statusCode: response.statusCode,
+                            attempt: attempt,
+                            retryable: false
+                        )
+                    )
+                    throw overflow
+                }
                 let error = makeHTTPError(response, attempts: attempt)
                 await onEvent?(
                     .requestFailed(
@@ -297,6 +310,8 @@ public struct OpenAICompatibleLanguageModel: StreamingWorkflowLanguageModel {
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as OpenAICompatibleLanguageModelError {
+                throw error
+            } catch let error as LanguageModelContextWindowExceeded {
                 throw error
             } catch {
                 let retryable = Self.isRetryableTransportError(error)
@@ -357,7 +372,7 @@ public struct OpenAICompatibleLanguageModel: StreamingWorkflowLanguageModel {
     ) async throws {
         guard
             request.tools.isEmpty
-                || request.toolChoice == LanguageModelToolChoice.none
+                || request.toolChoice == LanguageModelToolChoice.disabled
         else {
             throw
                 OpenAICompatibleLanguageModelError
@@ -422,6 +437,14 @@ public struct OpenAICompatibleLanguageModel: StreamingWorkflowLanguageModel {
                 )
             )
         }
+        messages.append(
+            contentsOf: try request.history.map {
+                try ChatMessage(
+                    $0,
+                    maximumInlineImageBytes: maximumInlineImageBytes
+                )
+            }
+        )
         messages.append(
             try ChatMessage(
                 userPrompt: request.prompt,
@@ -717,6 +740,21 @@ public struct OpenAICompatibleLanguageModel: StreamingWorkflowLanguageModel {
             finishReason: choice.finishReason.map {
                 LanguageModelFinishReason(rawValue: $0)
             }
+        )
+    }
+
+    private func contextWindowExceeded(
+        _ response: HTTPModelTransportResponse
+    ) -> LanguageModelContextWindowExceeded? {
+        let error = try? JSONDecoder().decode(
+            ErrorEnvelope.self,
+            from: response.data
+        ).error
+        return LanguageModelContextWindowExceeded.detect(
+            provider: providerIdentifier,
+            statusCode: response.statusCode,
+            code: error?.code,
+            message: error?.message
         )
     }
 

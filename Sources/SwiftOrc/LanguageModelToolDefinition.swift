@@ -90,11 +90,28 @@ public struct LanguageModelToolDefinition: Sendable, Equatable, Codable {
 }
 
 /// How the model may select from the tools on one request.
+@nonexhaustive
 public enum LanguageModelToolChoice: Sendable, Equatable, Codable {
     case automatic
-    case none
+    /// Tools are offered but must not be called.
+    case disabled
     case required
     case tool(String)
+
+    /// The former name of ``disabled``.
+    ///
+    /// In an optional context, `toolChoice: .none` means "not set" rather than
+    /// "disabled", which leaves tools enabled. Use ``disabled`` instead.
+    @available(*, deprecated, renamed: "disabled")
+    public static var none: LanguageModelToolChoice { .disabled }
+
+    // `disabled` keeps the "none" key so existing encoded values still decode.
+    private enum CodingKeys: String, CodingKey {
+        case automatic
+        case disabled = "none"
+        case required
+        case tool
+    }
 }
 
 /// One function invocation requested by a model.
@@ -111,6 +128,7 @@ public struct LanguageModelToolCall: Sendable, Equatable, Codable {
 }
 
 /// Provider-neutral conversation state appended after the original prompt.
+@nonexhaustive
 public enum LanguageModelMessage: Sendable, Equatable, Codable {
     case user(String)
     case userContent([LanguageModelInputPart])

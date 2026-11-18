@@ -66,7 +66,7 @@ func nativeToolsAreDisabledByExplicitNoneChoice() throws {
     let selected = try model.selectedNativeTools(
         for: LanguageModelRequest(
             prompt: "Do not use tools.",
-            toolChoice: LanguageModelToolChoice.none,
+            toolChoice: LanguageModelToolChoice.disabled,
             toolAccessPolicy: LanguageModelToolAccessPolicy(rules: [])
         )
     )
@@ -446,4 +446,38 @@ func appleToolCallLimitCanBeEffectivelyUnlimited() async throws {
         _ = try await tool.call(arguments: arguments)
     }
     #expect(await recorder.executions.count == 100)
+}
+
+@Test
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+func appleAdapterRejectsHistorySoRoutersCanMoveOn() async throws {
+    let model = AppleFoundationModel()
+
+    do {
+        _ = try await model.generate(
+            LanguageModelRequest(prompt: "Now", history: [.user("Earlier")])
+        )
+        Issue.record("Expected history to be rejected")
+    } catch let error as AppleFoundationModelError {
+        #expect(
+            error == .unsupportedInput(kind: LanguageModelCapability.conversationHistory.rawValue))
+    }
+}
+
+@Test
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+func appleContextWindowErrorUsesTheSharedType() {
+    let mapped = AppleFoundationModel.mappingContextWindowError(
+        LanguageModelSession.GenerationError.exceededContextWindowSize(
+            .init(debugDescription: "too long")
+        )
+    )
+    #expect(
+        mapped as? LanguageModelContextWindowExceeded
+            == LanguageModelContextWindowExceeded(
+                provider: AppleFoundationModel.providerIdentifier
+            ))
+
+    let unrelated = AppleFoundationModel.mappingContextWindowError(URLError(.timedOut))
+    #expect(unrelated is URLError)
 }

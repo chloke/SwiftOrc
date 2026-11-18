@@ -1,6 +1,7 @@
 import Foundation
 
 /// Provider-neutral image fidelity requested for one model input.
+@nonexhaustive
 public enum LanguageModelImageDetail: String, Sendable, Equatable, Codable {
     case automatic
     case low
@@ -8,6 +9,7 @@ public enum LanguageModelImageDetail: String, Sendable, Equatable, Codable {
 }
 
 /// Image bytes or a provider-fetchable URL used only for a model request.
+@nonexhaustive
 public enum LanguageModelImageSource: Sendable, Equatable, Codable {
     case data(Data, mediaType: String)
     case url(URL)
@@ -28,6 +30,7 @@ public struct LanguageModelImage: Sendable, Equatable, Codable {
 }
 
 /// Ordered text and image content appended to a request's primary user prompt.
+@nonexhaustive
 public enum LanguageModelInputPart: Sendable, Equatable, Codable {
     case text(String)
     case image(LanguageModelImage)

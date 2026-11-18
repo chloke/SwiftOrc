@@ -1,4 +1,5 @@
 /// The decision returned after a node finishes executing.
+@nonexhaustive
 public enum NodeResult<State: Sendable>: Sendable {
     /// Attaches structured diagnostics while preserving another node result.
     indirect case annotated(NodeResult<State>, WorkflowAnnotation)
@@ -24,6 +25,11 @@ public enum NodeResult<State: Sendable>: Sendable {
 
     /// Finish the workflow successfully.
     case finish(State)
+
+    /// Suspend until the application answers `request`, then continue at
+    /// `resumeAt`. When `resumeAt` is `nil`, the same node runs again and
+    /// finds the answer in ``WorkflowContext/inputResponse``.
+    case awaitInput(State, request: WorkflowInputRequest, resumeAt: NodeID? = nil)
 }
 
 /// A unit of work in a workflow graph.

@@ -4,8 +4,9 @@ This iOS and macOS application presents focused examples of the framework's
 features. It is an example catalog, not the required starting point for using
 `SwiftOrc`.
 
-Open `SwiftOrcDemo.xcodeproj`, select the `SwiftOrcDemo` scheme, and run on an
-eligible device or Mac with Apple Intelligence enabled.
+Open `SwiftOrcDemo.xcodeproj`, select the `SwiftOrcDemo` scheme, choose your
+own development team under Signing & Capabilities, and run on an eligible
+device or Mac with Apple Intelligence enabled.
 
 ## Calculator Pipeline
 

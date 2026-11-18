@@ -128,7 +128,7 @@ enum ResponsesToolChoice: Encodable {
     init(_ choice: LanguageModelToolChoice) {
         switch choice {
         case .automatic: self = .mode("auto")
-        case .none: self = .mode("none")
+        case .disabled: self = .mode("none")
         case .required: self = .mode("required")
         case let .tool(name): self = .function(name)
         }

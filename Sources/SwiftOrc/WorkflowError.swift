@@ -1,4 +1,7 @@
+import Foundation
+
 /// Errors produced by workflow definition validation or graph execution.
+@nonexhaustive
 public enum WorkflowError: Error, Sendable, Equatable {
     case noNodes
     case duplicateNodeID(NodeID)
@@ -22,4 +25,14 @@ public enum WorkflowError: Error, Sendable, Equatable {
     case retryLimitExceeded(node: NodeID, limit: Int)
     case nodeTimedOut(node: NodeID, timeout: Duration)
     case validationFailed(node: NodeID, reason: String)
+    /// The checkpoint is waiting for input; resume it with
+    /// `resume(from:answering:)`.
+    case checkpointAwaitingInput(UUID)
+    /// `resume(from:answering:)` was called with a checkpoint that is not
+    /// waiting for input.
+    case checkpointNotAwaitingInput
+    /// The answer is for a different request than the checkpoint is waiting
+    /// on, for example a stale or duplicate answer.
+    case inputRequestMismatch(expected: UUID, actual: UUID)
+    case inputRequestExpired(UUID)
 }

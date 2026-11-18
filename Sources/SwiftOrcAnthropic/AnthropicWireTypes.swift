@@ -148,12 +148,12 @@ struct AnthropicToolChoice: Encodable {
 
     init(_ choice: LanguageModelToolChoice, parallelToolCalls: Bool?) {
         disableParallelToolUse =
-            choice == .none ? nil : parallelToolCalls.map { !$0 }
+            choice == .disabled ? nil : parallelToolCalls.map { !$0 }
         switch choice {
         case .automatic:
             type = "auto"
             name = nil
-        case .none:
+        case .disabled:
             type = "none"
             name = nil
         case .required:

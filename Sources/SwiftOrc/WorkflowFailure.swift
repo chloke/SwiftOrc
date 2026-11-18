@@ -1,5 +1,6 @@
 /// A sendable, inspectable description of a failure encountered by a workflow.
 public struct WorkflowFailure: Error, Sendable, Equatable, Codable {
+    @nonexhaustive
     public enum Kind: Sendable, Equatable, Codable {
         case execution
         case validation
@@ -62,8 +63,12 @@ public struct WorkflowFailure: Error, Sendable, Equatable, Codable {
             .unsupportedCheckpointVersion, .checkpointDefinitionMismatch,
             .checkpointNodeNotFound, .invalidCheckpointAttempt,
             .invalidCheckpointSteps,
-            .invalidMaximumSteps, .invalidMaximumRetriesPerNode:
+            .invalidMaximumSteps, .invalidMaximumRetriesPerNode,
+            .checkpointAwaitingInput, .checkpointNotAwaitingInput,
+            .inputRequestMismatch:
             return .configuration
+        case .inputRequestExpired:
+            return .validation
         }
     }
 }

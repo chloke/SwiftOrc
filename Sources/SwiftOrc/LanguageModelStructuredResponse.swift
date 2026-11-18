@@ -24,6 +24,7 @@ public struct LanguageModelJSONSchema: Sendable, Equatable, Codable {
 }
 
 /// Provider-neutral control over the expected model response representation.
+@nonexhaustive
 public enum LanguageModelResponseFormat: Sendable, Equatable, Codable {
     case jsonSchema(LanguageModelJSONSchema)
 }
@@ -48,6 +49,7 @@ public struct StructuredLanguageModelResponse<Output: Sendable>: Sendable {
 ///
 /// The raw response is intentionally excluded because it may contain sensitive
 /// application or user data.
+@nonexhaustive
 public enum StructuredLanguageModelError: Error, Sendable, Equatable {
     case decodingFailed(outputType: String, failure: WorkflowFailure)
 }
@@ -56,7 +58,7 @@ public enum StructuredLanguageModelError: Error, Sendable, Equatable {
 /// the returned JSON into `Output`.
 public struct StructuredLanguageModel<Output>: Sendable
 where Output: LanguageModelStructuredOutput {
-    private let model: any WorkflowLanguageModel
+    let model: any WorkflowLanguageModel
 
     public init<Model: WorkflowLanguageModel>(model: Model) {
         self.model = model
@@ -65,10 +67,21 @@ where Output: LanguageModelStructuredOutput {
     public func generate(
         _ request: LanguageModelRequest
     ) async throws -> StructuredLanguageModelResponse<Output> {
+        let response = try await model.generate(Self.structuredRequest(request))
+        return try Self.decode(response)
+    }
+
+    static func structuredRequest(
+        _ request: LanguageModelRequest
+    ) -> LanguageModelRequest {
         var request = request
         request.responseFormat = .jsonSchema(Output.languageModelSchema)
-        let response = try await model.generate(request)
+        return request
+    }
 
+    static func decode(
+        _ response: LanguageModelResponse
+    ) throws -> StructuredLanguageModelResponse<Output> {
         do {
             let output = try JSONDecoder().decode(
                 Output.self,

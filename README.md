@@ -10,7 +10,8 @@ requires capabilities the local model cannot provide.
 
 SwiftOrc adds orchestration around those models: typed workflow state,
 validation, retries, fallback, tool policies, structured output, parallel work,
-checkpointing, and privacy-conscious diagnostics.
+conversation history, pausing for user input, checkpointing, and
+privacy-conscious diagnostics.
 
 ## Local first, not local only
 
@@ -156,7 +157,10 @@ Advanced behavior is opt-in and defaults to being absent:
 | Typed JSON output | `StructuredLanguageModelNode` |
 | Multiple providers | `LanguageModelRouter` |
 | Model tools | `ToolCallingLanguageModel` |
+| Conversation history | `LanguageModelNode(conversation:)` or `ConversationalLanguageModel` |
+| Waiting for user input | `NodeResult.awaitInput` |
 | Tool approval UI | `LanguageModelToolApprovalCoordinator` |
+| Tool approvals that survive relaunch | `approvalMode: .durable` with a conversation node |
 | Images or generated files | A `WorkflowArtifactStore` |
 | Crash-safe continuation | A checkpoint handler |
 | Parallel work | `ParallelNode` |

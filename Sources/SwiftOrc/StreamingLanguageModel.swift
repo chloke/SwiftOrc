@@ -1,4 +1,5 @@
 /// One event emitted while a language model is generating a response.
+@nonexhaustive
 public enum LanguageModelStreamEvent: Sendable, Equatable {
     case textDelta(String)
     case completed(LanguageModelResponse)
@@ -38,6 +39,7 @@ public extension StreamingWorkflowLanguageModel {
     }
 }
 
+@nonexhaustive
 public enum LanguageModelStreamingError: Error, Sendable, Equatable {
     case missingCompletion
     case nonMonotonicSnapshot

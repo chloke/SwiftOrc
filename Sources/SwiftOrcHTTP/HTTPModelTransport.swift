@@ -292,6 +292,7 @@ public struct URLSessionHTTPModelTransport: HTTPStreamingModelTransport {
     }
 }
 
+@nonexhaustive
 public enum HTTPModelTransportError: Error, Sendable, Equatable {
     case nonHTTPResponse
     case invalidResourceLimits
@@ -384,6 +385,7 @@ public struct HTTPRequestHeaders: Sendable {
     }
 }
 
+@nonexhaustive
 public enum HTTPRequestHeadersError: Error, Sendable, Equatable {
     case missingBearerToken
     case invalidBearerToken

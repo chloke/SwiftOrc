@@ -204,6 +204,80 @@ server-side request forgery. Apple's current Foundation Models prompt API is
 text-only, so its adapter explicitly rejects image input instead of discarding
 it.
 
+## Conversation history
+
+Conversation history works without configuration. Store a
+`LanguageModelConversation` in workflow state and point a `LanguageModelNode`
+at it:
+
+```swift
+struct ChatState: Codable, Sendable {
+    var chat = LanguageModelConversation()
+    var question = ""
+}
+
+let reply = LanguageModelNode<ChatState>(
+    id: "reply",
+    model: model,
+    conversation: \.chat,
+    request: { state, _ in LanguageModelRequest(prompt: state.question) },
+    reduce: { response, state, _ in .finish(state) }
+)
+```
+
+Before each request the node sends the stored history ahead of the prompt.
+After the response it records the turn, and `reduce` receives state with that
+turn already recorded. Because the conversation lives in state, it is saved
+with every checkpoint. A turn keeps the model's tool calls and their results
+together, because providers reject a tool call without its result.
+
+`StructuredLanguageModelNode` accepts the same `conversation:` and `policy:`
+arguments; the recorded reply is the model's JSON output, and a reply that does
+not decode is not recorded.
+
+Outside workflows, `ConversationalLanguageModel` wraps any model and keeps the
+conversation in memory. For full control, set `LanguageModelRequest.history`
+directly and store it however the app prefers. `history` is sent before the
+prompt; `messages` keeps its meaning as this turn's tool exchange after the
+prompt.
+
+### Tuning behavior
+
+Every setting in `LanguageModelConversationPolicy` is optional:
+
+```swift
+let policy = LanguageModelConversationPolicy(
+    overflow: .summarize(using: smallModel, keepRecentTurns: 6),
+    maximumInputTokens: 24_000,
+    toolResults: .truncated(toBytes: 2_000)
+)
+```
+
+- `overflow` decides what happens when history no longer fits:
+  `.dropOldestTurns` (the default), `.summarize(using:keepRecentTurns:)`,
+  `.fail`, or `.custom { conversation, context in ... }`. A summary is sent as
+  untrusted user content and the summarizing request disables tools.
+- Without `maximumInputTokens`, history is trimmed only after a provider
+  rejects a request as too long; the request is then retried
+  `maximumOverflowRetries` times (once by default). With a budget, history is
+  also trimmed before sending. A request is never retried after a tool that may
+  change state ran during the turn.
+- `toolResults` changes how earlier tool results are sent: `.full` (default),
+  `.truncated(toBytes:)`, `.omitted`, or `.custom`. Stored history is unchanged.
+- `tokenEstimator` defaults to a character-based estimate that is corrected
+  with the token counts providers report. Supply an exact tokenizer if needed.
+- When the workflow has an artifact store, inline images are stored there and
+  history keeps only a reference. Set `storesImagesAsArtifacts` to `false` to
+  keep them inline.
+
+The bundled adapters report a provider's "context too long" rejection as
+`LanguageModelContextWindowExceeded`, including the token counts the provider
+states. A router reports it directly when every route it tried failed that
+way. Detection currently covers non-streaming requests.
+
+Apple's stateless adapter rejects `history` as it does `messages`, so a router
+moves on to a provider that supports conversation history.
+
 ## Stateless and conversational Apple sessions
 
 `AppleFoundationModel` creates a fresh Apple session for every request. This is

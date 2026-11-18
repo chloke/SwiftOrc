@@ -8,6 +8,7 @@ public enum AppleFoundationModelAvailability: Sendable, Equatable {
     case available
     case unavailable(Reason)
 
+    @nonexhaustive
     public enum Reason: Sendable, Equatable {
         case deviceNotEligible
         case appleIntelligenceNotEnabled
@@ -18,6 +19,7 @@ public enum AppleFoundationModelAvailability: Sendable, Equatable {
 
 /// Errors produced before a request can be sent to Apple's model.
 @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+@nonexhaustive
 public enum AppleFoundationModelError: Error, Sendable, Equatable {
     case unavailable(AppleFoundationModelAvailability.Reason)
     case invalidResponseSchema(name: String, path: String, reason: String)
@@ -27,6 +29,7 @@ public enum AppleFoundationModelError: Error, Sendable, Equatable {
 /// A JSON Schema feature that cannot be represented by Apple's dynamic
 /// generation schemas.
 @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+@nonexhaustive
 public enum AppleFoundationModelToolBridgeError: Error, Sendable, Equatable {
     case invalidSchema(tool: String, path: String, reason: String)
     case invalidMaximumConcurrentToolCalls
@@ -152,7 +155,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
     public func generate(
         _ request: LanguageModelRequest
     ) async throws -> LanguageModelResponse {
-        guard request.messages.isEmpty else {
+        guard request.messages.isEmpty, request.history.isEmpty else {
             // A stateless Apple session cannot faithfully recreate assistant
             // and tool turns. Refuse explicitly so a router can choose a
             // conversation-capable provider instead of silently dropping them.
@@ -197,24 +200,28 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         )
         let responseContent: String
         let prompt = try Self.prompt(from: request)
-        switch request.responseFormat {
-        case let .jsonSchema(responseSchema):
-            let schema = try AppleToolSchemaConverter.convertResponse(
-                responseSchema
-            )
-            let response = try await session.respond(
-                to: prompt,
-                schema: schema,
-                includeSchemaInPrompt: responseSchema.includeSchemaInPrompt,
-                options: Self.options(from: request.options)
-            )
-            responseContent = response.content.jsonString
-        case nil:
-            let response = try await session.respond(
-                to: prompt,
-                options: Self.options(from: request.options)
-            )
-            responseContent = response.content
+        do {
+            switch request.responseFormat {
+            case let .jsonSchema(responseSchema):
+                let schema = try AppleToolSchemaConverter.convertResponse(
+                    responseSchema
+                )
+                let response = try await session.respond(
+                    to: prompt,
+                    schema: schema,
+                    includeSchemaInPrompt: responseSchema.includeSchemaInPrompt,
+                    options: Self.options(from: request.options)
+                )
+                responseContent = response.content.jsonString
+            case nil:
+                let response = try await session.respond(
+                    to: prompt,
+                    options: Self.options(from: request.options)
+                )
+                responseContent = response.content
+            }
+        } catch {
+            throw Self.mappingContextWindowError(error)
         }
 
         let executions = await recorder.executions
@@ -242,7 +249,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    guard request.messages.isEmpty else {
+                    guard request.messages.isEmpty, request.history.isEmpty else {
                         throw AppleFoundationModelError.unsupportedInput(
                             kind: LanguageModelCapability.conversationHistory.rawValue
                         )
@@ -287,16 +294,20 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
                     let prompt = try Self.prompt(from: request)
                     var previous = ""
 
-                    for try await snapshot in session.streamResponse(
-                        to: prompt,
-                        options: Self.options(from: request.options)
-                    ) {
-                        let current = snapshot.content
-                        let delta = try Self.delta(current, after: previous)
-                        if !delta.isEmpty {
-                            continuation.yield(.textDelta(delta))
+                    do {
+                        for try await snapshot in session.streamResponse(
+                            to: prompt,
+                            options: Self.options(from: request.options)
+                        ) {
+                            let current = snapshot.content
+                            let delta = try Self.delta(current, after: previous)
+                            if !delta.isEmpty {
+                                continuation.yield(.textDelta(delta))
+                            }
+                            previous = current
                         }
-                        previous = current
+                    } catch {
+                        throw Self.mappingContextWindowError(error)
                     }
 
                     let executions = await recorder.executions
@@ -323,6 +334,17 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Reports Apple's context-window error with the shared type, so
+    /// conversations can trim history the same way for every provider.
+    static func mappingContextWindowError(_ error: any Error) -> any Error {
+        guard let generationError = error as? LanguageModelSession.GenerationError,
+            case .exceededContextWindowSize = generationError
+        else {
+            return error
+        }
+        return LanguageModelContextWindowExceeded(provider: providerIdentifier)
     }
 
     private static func delta(
@@ -357,7 +379,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         for request: LanguageModelRequest
     ) throws -> [SelectedAppleBridgedTool] {
         guard !workflowTools.isEmpty else { return [] }
-        if request.toolChoice == LanguageModelToolChoice.none { return [] }
+        if request.toolChoice == LanguageModelToolChoice.disabled { return [] }
 
         let registered = Dictionary(
             uniqueKeysWithValues: workflowTools.map { ($0.name, $0) }
@@ -419,7 +441,7 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         for request: LanguageModelRequest
     ) throws -> [any Tool] {
         guard !nativeTools.isEmpty else { return [] }
-        if request.toolChoice == LanguageModelToolChoice.none { return [] }
+        if request.toolChoice == LanguageModelToolChoice.disabled { return [] }
 
         // Native Foundation Models tools execute outside SwiftOrc's tool
         // executor, so request-scoped authorization and approval cannot be
@@ -473,14 +495,25 @@ public struct AppleFoundationModel: StreamingWorkflowLanguageModel {
         return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
     }
 
-    private static func options(
+    static func options(
         from options: LanguageModelGenerationOptions
     ) -> GenerationOptions {
-        GenerationOptions(
-            sampling: sampling(from: options.sampling),
-            temperature: options.temperature,
-            maximumResponseTokens: options.maximumResponseTokens
-        )
+        // The 27 SDKs (Swift 6.4 toolchains) deprecate `init(sampling:)` in
+        // favor of `init(samplingMode:)`, which Apple back-deploys to the 26
+        // releases. Older SDKs only have `init(sampling:)`.
+        #if compiler(>=6.4)
+            GenerationOptions(
+                samplingMode: sampling(from: options.sampling),
+                temperature: options.temperature,
+                maximumResponseTokens: options.maximumResponseTokens
+            )
+        #else
+            GenerationOptions(
+                sampling: sampling(from: options.sampling),
+                temperature: options.temperature,
+                maximumResponseTokens: options.maximumResponseTokens
+            )
+        #endif
     }
 
     private static func sampling(

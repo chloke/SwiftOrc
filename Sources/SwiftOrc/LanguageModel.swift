@@ -1,4 +1,5 @@
 /// Provider-neutral sampling options for text generation.
+@nonexhaustive
 public enum LanguageModelSampling: Sendable, Equatable {
     case greedy
     case randomTopK(Int, seed: UInt64? = nil)
@@ -32,6 +33,10 @@ public struct LanguageModelRequest: Sendable, Equatable {
     public var routingPolicy: LanguageModelRoutingPolicy
     public var requiredCapabilities: Set<LanguageModelCapability>
     public var input: [LanguageModelInputPart]
+    /// Earlier conversation turns, sent before ``prompt``.
+    public var history: [LanguageModelMessage]
+    /// This turn's continuation, such as tool calls and their results, sent
+    /// after ``prompt``.
     public var messages: [LanguageModelMessage]
     public var tools: [LanguageModelToolDefinition]
     public var toolChoice: LanguageModelToolChoice?
@@ -46,6 +51,7 @@ public struct LanguageModelRequest: Sendable, Equatable {
         routingPolicy: LanguageModelRoutingPolicy = .automatic,
         requiredCapabilities: Set<LanguageModelCapability> = [],
         input: [LanguageModelInputPart] = [],
+        history: [LanguageModelMessage] = [],
         messages: [LanguageModelMessage] = [],
         tools: [LanguageModelToolDefinition] = [],
         toolChoice: LanguageModelToolChoice? = nil,
@@ -59,6 +65,7 @@ public struct LanguageModelRequest: Sendable, Equatable {
         self.routingPolicy = routingPolicy
         self.requiredCapabilities = requiredCapabilities
         self.input = input
+        self.history = history
         self.messages = messages
         self.tools = tools
         self.toolChoice = toolChoice
@@ -115,6 +122,10 @@ public struct LanguageModelResponse: Sendable, Equatable {
     public var toolExecutionReport: LanguageModelToolExecutionReport?
     public var usage: LanguageModelUsage?
     public var finishReason: LanguageModelFinishReason?
+    /// The messages this turn added after the prompt: assistant tool calls,
+    /// tool results, and the final reply. Empty when a model does not report
+    /// them; conversations then record ``content`` as the reply.
+    public var transcript: [LanguageModelMessage]
 
     public init(
         content: String,
@@ -124,7 +135,8 @@ public struct LanguageModelResponse: Sendable, Equatable {
         toolCalls: [LanguageModelToolCall] = [],
         toolExecutionReport: LanguageModelToolExecutionReport? = nil,
         usage: LanguageModelUsage? = nil,
-        finishReason: LanguageModelFinishReason? = nil
+        finishReason: LanguageModelFinishReason? = nil,
+        transcript: [LanguageModelMessage] = []
     ) {
         self.content = content
         self.provider = provider
@@ -134,6 +146,7 @@ public struct LanguageModelResponse: Sendable, Equatable {
         self.toolExecutionReport = toolExecutionReport
         self.usage = usage
         self.finishReason = finishReason
+        self.transcript = transcript
     }
 }
 

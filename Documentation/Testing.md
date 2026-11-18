@@ -50,6 +50,17 @@ let slow = ScriptedLanguageModel(
 )
 ```
 
+To test code that reacts to a specific error type, script it with
+`.throwing(_:)`. `.contextWindowExceeded()` simulates a provider rejecting a
+request as too long, which exercises a conversation's overflow handling:
+
+```swift
+let model = ScriptedLanguageModel(
+    .contextWindowExceeded(),
+    .respond(content: "Answer after trimming history")
+)
+```
+
 The model records prompts only in memory and only exposes them through an
 explicit request or snapshot. Exhaustion errors report the request number, not
 the prompt or response content.
@@ -72,6 +83,10 @@ let observations = await probe.snapshot()
 #expect(observations.startCount(for: "generate") == 2)
 #expect(observations.selectedRoutes(for: "quality") == ["accepted"])
 ```
+
+For workflows that wait for user input, `inputRequests(from:)` lists the
+requests a node made and `pendingInput` returns the request the latest
+checkpoint is waiting on.
 
 The snapshot also exposes raw events and checkpoints for application-specific
 assertions. Convenience queries never inspect workflow state, prompts, tool

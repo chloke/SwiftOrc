@@ -73,6 +73,7 @@ public enum LanguageModelFallbackDecision: Sendable, Equatable, Codable {
 }
 
 /// The outcome of one provider considered by a model router.
+@nonexhaustive
 public enum LanguageModelRoutingAttemptOutcome: Sendable, Equatable, Codable {
     case skipped
     case failed(WorkflowFailure)
@@ -80,6 +81,7 @@ public enum LanguageModelRoutingAttemptOutcome: Sendable, Equatable, Codable {
 }
 
 /// Why a provider was skipped without making a model request.
+@nonexhaustive
 public enum LanguageModelRoutingSkipReason: Sendable, Equatable, Codable {
     case routingPolicy
     case missingCapabilities(Set<LanguageModelCapability>)
@@ -138,6 +140,7 @@ public struct LanguageModelRoutingReport: Sendable, Equatable, Codable {
 }
 
 /// Live routing diagnostics emitted while providers are considered.
+@nonexhaustive
 public enum LanguageModelRoutingEvent: Sendable, Equatable {
     case skipped(provider: String)
     case skippedForCapabilities(
@@ -219,6 +222,7 @@ public struct LanguageModelRoute: Sendable {
 }
 
 /// Invalid router definitions rejected during construction.
+@nonexhaustive
 public enum LanguageModelRouterConfigurationError: Error, Sendable, Equatable {
     case noRoutes
     case emptyProviderIdentifier
@@ -226,6 +230,7 @@ public enum LanguageModelRouterConfigurationError: Error, Sendable, Equatable {
 }
 
 /// Why no provider produced a response.
+@nonexhaustive
 public enum LanguageModelRoutingFailureReason: Sendable, Equatable, Codable {
     case noEligibleProviders
     case noCompatibleProviders(Set<LanguageModelCapability>)
@@ -302,6 +307,8 @@ public struct LanguageModelRouter: WorkflowLanguageModel {
         var foundEligibleProvider = false
         var foundCompatibleProvider = false
         var foundCapabilityMismatch = false
+        var contextWindowFailure: LanguageModelContextWindowExceeded?
+        var foundOtherFailure = false
         let requiredCapabilities = request.effectiveRequiredCapabilities
 
         for route in routes {
@@ -397,6 +404,10 @@ public struct LanguageModelRouter: WorkflowLanguageModel {
                 return response
             } catch is CancellationError {
                 throw CancellationError()
+            } catch let suspended as LanguageModelToolTurnSuspended {
+                // A paused turn is not a failure; another route must not
+                // start it over.
+                throw suspended
             } catch {
                 let failure = WorkflowFailure(error: error)
                 // Another route would repeat tools that already ran here.
@@ -418,8 +429,16 @@ public struct LanguageModelRouter: WorkflowLanguageModel {
                         decision: decision
                     )
                 )
+                if let overflow = error as? LanguageModelContextWindowExceeded {
+                    contextWindowFailure = overflow
+                } else {
+                    foundOtherFailure = true
+                }
 
                 if decision == .stop {
+                    if let overflow = error as? LanguageModelContextWindowExceeded {
+                        throw overflow
+                    }
                     throw LanguageModelRoutingError(
                         reason: .stopped(provider: route.provider),
                         report: LanguageModelRoutingReport(
@@ -433,6 +452,11 @@ public struct LanguageModelRouter: WorkflowLanguageModel {
             }
         }
 
+        // Conversations trim history when every attempted route rejected the
+        // request as too long, so that cause is reported directly.
+        if let contextWindowFailure, !foundOtherFailure {
+            throw contextWindowFailure
+        }
         throw LanguageModelRoutingError(
             reason: foundEligibleProvider
                 ? .exhaustedProviders

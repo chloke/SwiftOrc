@@ -339,7 +339,7 @@ func approvalDenialCanReturnToModelForReplanning() async throws {
     #expect(response.toolExecutionReport?.executions.isEmpty == true)
     let requests = await model.requests
     #expect(requests[1].tools.isEmpty)
-    #expect(requests[1].toolChoice == LanguageModelToolChoice.none)
+    #expect(requests[1].toolChoice == LanguageModelToolChoice.disabled)
     guard case let .tool(callID, output) = requests[1].messages.last else {
         Issue.record("Expected a denial result returned to the model")
         return

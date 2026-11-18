@@ -2,6 +2,7 @@ import Foundation
 import SwiftOrc
 import SwiftOrcHTTP
 
+@nonexhaustive
 public enum AnthropicRequestHeadersError: Error, Sendable, Equatable {
     case missingAPIKey
     case invalidAPIKey
@@ -32,6 +33,7 @@ private func anthropicHeaders(_ key: String) throws -> [String: String] {
     return ["x-api-key": key]
 }
 
+@nonexhaustive
 public enum AnthropicConfigurationError: Error, Sendable, Equatable {
     case emptyProviderIdentifier
     case emptyModelIdentifier
@@ -45,6 +47,7 @@ public enum AnthropicConfigurationError: Error, Sendable, Equatable {
     case invalidResourceLimits
 }
 
+@nonexhaustive
 public enum AnthropicLanguageModelError: Error, Sendable, Equatable,
     CustomStringConvertible
 {
@@ -254,6 +257,17 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
                     return result
                 }
 
+                if let overflow = contextWindowExceeded(response) {
+                    await onEvent?(
+                        .requestFailed(
+                            provider: providerIdentifier,
+                            statusCode: response.statusCode,
+                            attempt: attempt,
+                            retryable: false
+                        )
+                    )
+                    throw overflow
+                }
                 let error = makeHTTPError(response, attempts: attempt)
                 await onEvent?(
                     .requestFailed(
@@ -280,6 +294,8 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as AnthropicLanguageModelError {
+                throw error
+            } catch let error as LanguageModelContextWindowExceeded {
                 throw error
             } catch {
                 let retryable = Self.isRetryableTransportError(error)
@@ -337,7 +353,7 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
     ) async throws {
         guard
             request.tools.isEmpty
-                || request.toolChoice == LanguageModelToolChoice.none
+                || request.toolChoice == LanguageModelToolChoice.disabled
         else {
             throw
                 AnthropicLanguageModelError
@@ -507,12 +523,13 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
         let system = [defaultInstructions, request.instructions]
             .compactMap(Self.nonEmpty)
             .joined(separator: "\n\n")
-        var messages = [
+        var messages = try request.history.map(makeMessage)
+        messages.append(
             AnthropicMessage(
                 role: "user",
                 content: try makeContent(prompt: request.prompt, input: request.input)
             )
-        ]
+        )
         for message in request.messages {
             messages.append(try makeMessage(message))
         }
@@ -521,11 +538,11 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
         // Anthropic rejects tool history without them. A `none` choice keeps
         // the model from calling any of them.
         let disablesTools =
-            request.toolChoice == LanguageModelToolChoice.none
+            request.toolChoice == LanguageModelToolChoice.disabled
             || request.tools.isEmpty
         let definitions =
             request.tools.isEmpty
-            ? Self.toolNamesInHistory(request.messages).map {
+            ? Self.toolNamesInHistory(request.history + request.messages).map {
                 AnthropicTool(unavailableToolNamed: $0)
             }
             : request.tools.map(AnthropicTool.init)
@@ -535,7 +552,7 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
             ? nil
             : AnthropicToolChoice(
                 disablesTools
-                    ? LanguageModelToolChoice.none
+                    ? LanguageModelToolChoice.disabled
                     : request.toolChoice ?? .automatic,
                 parallelToolCalls: request.parallelToolCalls
             )
@@ -725,6 +742,21 @@ public struct AnthropicLanguageModel: StreamingWorkflowLanguageModel {
                 maximum: resourceLimits.maximumResponseBodyBytes
             )
         }
+    }
+
+    private func contextWindowExceeded(
+        _ response: HTTPModelTransportResponse
+    ) -> LanguageModelContextWindowExceeded? {
+        let error = try? JSONDecoder().decode(
+            AnthropicErrorEnvelope.self,
+            from: response.data
+        ).error
+        return LanguageModelContextWindowExceeded.detect(
+            provider: providerIdentifier,
+            statusCode: response.statusCode,
+            code: nil,
+            message: error?.message
+        )
     }
 
     private func makeHTTPError(

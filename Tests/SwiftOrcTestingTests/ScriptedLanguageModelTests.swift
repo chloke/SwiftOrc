@@ -220,3 +220,62 @@ func delayedScriptedStepRespectsCancellation() async throws {
         // Expected.
     }
 }
+
+@Test
+func scriptedContextWindowRejectionDrivesConversationOverflow() async throws {
+    let model = ScriptedLanguageModel(
+        .contextWindowExceeded(maximumTokens: 100),
+        .respond(content: "Done")
+    )
+    let conversational = ConversationalLanguageModel(
+        model: model,
+        conversation: LanguageModelConversation(turns: [
+            LanguageModelConversationTurn(
+                prompt: String(repeating: "x", count: 600),
+                transcript: [.assistant(content: "A", toolCalls: [])]
+            )
+        ])
+    )
+
+    let response = try await conversational.generate(LanguageModelRequest(prompt: "Next"))
+
+    #expect(response.content == "Done")
+    let snapshot = await model.snapshot()
+    #expect(snapshot.allStepsConsumed)
+    #expect(snapshot.requests[0].history.count == 2)
+    #expect(snapshot.requests[1].history.isEmpty)
+}
+
+@Test
+func scriptedStepThrowsTheGivenErrorUnchanged() async throws {
+    let model = ScriptedLanguageModel(.throwing(ProbeError.expectedFailure))
+
+    await #expect(throws: ProbeError.self) {
+        _ = try await model.generate(LanguageModelRequest(prompt: "Hi"))
+    }
+}
+
+@Test
+func workflowProbeReportsInputRequests() async throws {
+    let request = WorkflowInputRequest(kind: .confirmation)
+    let probe = WorkflowProbe<ProbeState>()
+    let workflow = try Workflow<ProbeState>(
+        initialNode: "ask",
+        nodes: [
+            AnyWorkflowNode(id: "ask") { state, _ in
+                .awaitInput(state, request: request)
+            }
+        ]
+    )
+
+    _ = try await workflow.run(
+        ProbeState(),
+        budget: .unlimited,
+        onEvent: probe.eventHandler,
+        onCheckpoint: probe.checkpointHandler
+    )
+
+    let snapshot = await probe.snapshot()
+    #expect(snapshot.inputRequests(from: "ask") == [request.id])
+    #expect(snapshot.pendingInput == request)
+}

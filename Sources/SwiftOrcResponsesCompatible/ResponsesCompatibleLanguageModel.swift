@@ -3,6 +3,7 @@ import SwiftOrc
 import SwiftOrcHTTP
 
 /// Configuration errors rejected before a Responses request can be sent.
+@nonexhaustive
 public enum ResponsesCompatibleConfigurationError: Error, Sendable, Equatable {
     case emptyProviderIdentifier
     case emptyModelIdentifier
@@ -15,6 +16,7 @@ public enum ResponsesCompatibleConfigurationError: Error, Sendable, Equatable {
 }
 
 /// Failures returned by a Responses-compatible provider.
+@nonexhaustive
 public enum ResponsesCompatibleLanguageModelError: Error, Sendable, Equatable,
     CustomStringConvertible
 {
@@ -215,6 +217,17 @@ public struct ResponsesCompatibleLanguageModel: StreamingWorkflowLanguageModel {
                     return result
                 }
 
+                if let overflow = contextWindowExceeded(response) {
+                    await onEvent?(
+                        .requestFailed(
+                            provider: providerIdentifier,
+                            statusCode: response.statusCode,
+                            attempt: attempt,
+                            retryable: false
+                        )
+                    )
+                    throw overflow
+                }
                 let error = makeHTTPError(response, attempts: attempt)
                 await onEvent?(
                     .requestFailed(
@@ -241,6 +254,8 @@ public struct ResponsesCompatibleLanguageModel: StreamingWorkflowLanguageModel {
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as ResponsesCompatibleLanguageModelError {
+                throw error
+            } catch let error as LanguageModelContextWindowExceeded {
                 throw error
             } catch {
                 let retryable = Self.isRetryableTransportError(error)
@@ -298,7 +313,7 @@ public struct ResponsesCompatibleLanguageModel: StreamingWorkflowLanguageModel {
     ) async throws {
         guard
             request.tools.isEmpty
-                || request.toolChoice == LanguageModelToolChoice.none
+                || request.toolChoice == LanguageModelToolChoice.disabled
         else {
             throw
                 ResponsesCompatibleLanguageModelError
@@ -431,12 +446,13 @@ public struct ResponsesCompatibleLanguageModel: StreamingWorkflowLanguageModel {
         let instructions = [defaultInstructions, request.instructions]
             .compactMap(Self.nonEmpty)
             .joined(separator: "\n\n")
-        var input = [
+        var input = try request.history.flatMap(makeItems)
+        input.append(
             ResponsesInputItem.message(
                 role: "user",
                 content: try makeContent(prompt: request.prompt, input: request.input)
             )
-        ]
+        )
         for message in request.messages {
             input.append(contentsOf: try makeItems(message))
         }
@@ -647,6 +663,21 @@ public struct ResponsesCompatibleLanguageModel: StreamingWorkflowLanguageModel {
                 maximum: resourceLimits.maximumResponseBodyBytes
             )
         }
+    }
+
+    private func contextWindowExceeded(
+        _ response: HTTPModelTransportResponse
+    ) -> LanguageModelContextWindowExceeded? {
+        let error = try? JSONDecoder().decode(
+            ResponsesErrorEnvelope.self,
+            from: response.data
+        ).error
+        return LanguageModelContextWindowExceeded.detect(
+            provider: providerIdentifier,
+            statusCode: response.statusCode,
+            code: error?.code,
+            message: error?.message
+        )
     }
 
     private func makeHTTPError(

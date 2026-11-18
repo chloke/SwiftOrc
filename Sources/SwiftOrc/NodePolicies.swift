@@ -56,6 +56,7 @@ public struct WorkflowNodeRetryPolicy: Sendable {
 }
 
 /// The action taken when a node produces state that fails validation.
+@nonexhaustive
 public enum ValidationFailureBehavior: Sendable, Equatable {
     /// Retry the same node with the state it just produced.
     case retry
@@ -251,7 +252,7 @@ private func validatedNodeResult<State: Sendable>(
             validator: validator,
             behavior: behavior
         )
-    case .retry, .fallback:
+    case .retry, .fallback, .awaitInput:
         return result
     }
 }

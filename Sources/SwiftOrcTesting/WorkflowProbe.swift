@@ -29,6 +29,24 @@ public struct WorkflowProbeSnapshot<State: Sendable>: Sendable {
         }
     }
 
+    /// Returns the identifiers of input requests made by one node in event
+    /// order.
+    public func inputRequests(from node: NodeID) -> [UUID] {
+        events.compactMap { event in
+            guard case let .inputRequested(requestingNode, requestID, _, _) = event,
+                requestingNode == node
+            else {
+                return nil
+            }
+            return requestID
+        }
+    }
+
+    /// The request the most recent checkpoint is waiting on, if any.
+    public var pendingInput: WorkflowInputRequest? {
+        checkpoints.last?.pendingInput
+    }
+
     /// Returns fallback targets selected from one node in event order.
     public func fallbackTargets(from node: NodeID) -> [NodeID] {
         events.compactMap { event in

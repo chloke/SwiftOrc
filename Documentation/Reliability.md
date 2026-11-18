@@ -106,6 +106,56 @@ return `WorkflowRun` directly. `WorkflowExecutionBudget.unlimited` provides the
 same node-budget behavior through the budgeted result API, while the workflow's
 cumulative configuration limits still apply.
 
+## Waiting for user input
+
+A node can stop the workflow until the application answers a question. Nothing
+keeps running in the background, so the answer can arrive after the app was
+closed and relaunched:
+
+```swift
+AnyWorkflowNode(id: "confirm") { state, _ in
+    .awaitInput(
+        state,
+        request: WorkflowInputRequest(kind: .confirmation, prompt: "Place the order?"),
+        resumeAt: "place-order"
+    )
+}
+```
+
+The budgeted `run` returns `.suspended` with the reason
+`.awaitingInput(request)`, and the checkpoint stores the request. Plain `run`
+throws `WorkflowInputRequired`, which carries the same continuation. Pass
+`store.checkpointHandler` as `onCheckpoint` to save it automatically.
+
+Continue with the answer:
+
+```swift
+let result = try await workflow.resume(
+    from: checkpoint,
+    answering: request.id
+) { state in
+    state.confirmed = true
+}
+```
+
+- With `resumeAt`, the workflow continues at that node and the asking node does
+  not run again. Without it, the same node runs again and finds the answer in
+  `context.inputResponse`.
+- Write a typed answer into state with the closure, or pass a generic value with
+  `with:` for reusable nodes that do not know the app's state type. Both are
+  available.
+- Only an answer for the checkpoint's pending request is accepted. Stale or
+  duplicate answers, expired requests (`expiresAt`), and plain `resume` calls on
+  a checkpoint that is waiting for input fail with a `WorkflowError`.
+- Workflow events record the request's identifier and kind, never its prompt,
+  choices, or metadata.
+
+Durable tool approvals use the same mechanism with the `.toolApproval` kind; see
+[Approvals that survive closing the app](Tools.md#approvals-that-survive-closing-the-app).
+
+Checkpoints use format version 2, which adds the pending request and the
+delivered answer. Version 1 checkpoints from earlier releases still load.
+
 ## Events
 
 Pass `onEvent` only when the application needs tracing:

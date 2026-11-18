@@ -75,6 +75,10 @@ struct TraceItem: Identifiable, Sendable {
                     detail = "\(node): \(rounds), \(tools)"
                 }
                 kind = .information
+            @unknown default:
+                title = "Diagnostics recorded"
+                detail = "\(node)"
+                kind = .information
             }
 
         case let .retryScheduled(node, nextAttempt, reason):
@@ -106,6 +110,21 @@ struct TraceItem: Identifiable, Sendable {
             title = "Workflow finished"
             detail = "Final node: \(finalNode), \(steps) step(s)"
             kind = .success
+
+        case let .inputRequested(node, _, inputKind, resumeAt):
+            title = "Waiting for input"
+            detail = "\(node) asked for \(inputKind); continues at \(resumeAt)"
+            kind = .information
+
+        case let .inputReceived(node, _):
+            title = "Input received"
+            detail = "Continue at \(node)"
+            kind = .information
+
+        @unknown default:
+            title = "Workflow event"
+            detail = ""
+            kind = .information
         }
     }
 }
@@ -119,6 +138,8 @@ private extension LanguageModelRoutingAttempt {
             return "\(provider) failed"
         case .skipped:
             return "\(provider) skipped: \(skipReason?.traceDescription ?? "unknown")"
+        @unknown default:
+            return provider
         }
     }
 }
@@ -132,6 +153,8 @@ private extension LanguageModelRoutingSkipReason {
             "missing \(capabilities.map(\.rawValue).sorted().joined(separator: ", "))"
         case .ineligible:
             "ineligible"
+        @unknown default:
+            "unknown"
         }
     }
 }
@@ -147,6 +170,10 @@ private extension WorkflowTransitionKind {
             return "Use fallback \(target)"
         case .finish:
             return "Finish"
+        case let .awaitInput(target):
+            return "Wait for input, then continue to \(target)"
+        @unknown default:
+            return "Continue"
         }
     }
 }

@@ -2,6 +2,79 @@
 
 Notable changes to SwiftOrc are documented here.
 
+## 0.6.0 - 2026-11-18
+
+### Added
+
+- Conversation history. `LanguageModelConversation` is a saveable history that
+  can live in workflow state. `LanguageModelNode(conversation:)` sends it
+  before each prompt and records every turn; `ConversationalLanguageModel`
+  does the same outside workflows. `LanguageModelRequest.history` is sent
+  before the prompt and `LanguageModelResponse.transcript` reports what a turn
+  added.
+- `LanguageModelConversationPolicy`, where every setting is optional: overflow
+  strategies (`.dropOldestTurns` by default, `.summarize`, `.fail`, `.custom`),
+  an optional input budget, tool-result retention, and a pluggable token
+  estimator.
+- `LanguageModelContextWindowExceeded`, reported by the bundled adapters and by
+  routers when a provider rejects a request as too long.
+- Pausing for user input. `NodeResult.awaitInput` suspends a workflow until the
+  application answers; `resume(from:answering:)` continues it, optionally
+  updating state first. `JSONFileWorkflowCheckpointStore.checkpointHandler`
+  saves checkpoints automatically.
+- `StructuredLanguageModelNode(conversation:)` keeps conversation history like
+  `LanguageModelNode`.
+- `WorkflowFileProtection` and a `fileProtection:` option on
+  `JSONFileWorkflowCheckpointStore` and `DirectoryWorkflowArtifactStore`,
+  defaulting to `.completeUntilFirstUserAuthentication`.
+- Durable tool approvals. With
+  `ToolCallingLanguageModelConfiguration(approvalMode: .durable)`, a
+  conversation node suspends the workflow with a `.toolApproval` input request
+  instead of waiting in memory, saves the turn in
+  `LanguageModelConversation.pendingTurn`, and continues it after
+  `resume(from:answering:)`. Nothing in the round runs before the answer, and
+  a checkpoint is saved after each tool round with side effects so a crash
+  cannot repeat it.
+- `LanguageModelToolTurnSuspended`, which custom model wrappers should rethrow
+  unchanged.
+- `LanguageModelToolChoice.disabled`.
+- Testing support: `ScriptedLanguageModelStep.throwing(_:)` and
+  `.contextWindowExceeded()`, and `WorkflowProbeSnapshot.inputRequests(from:)`
+  and `pendingInput`.
+
+### Changed
+
+- Growth-prone public enums are marked `@nonexhaustive`, including workflow
+  events, errors, `NodeResult`, message and input types, and tool and routing
+  types. Closed sets such as `ValidationResult` and `JSONValue` are unchanged.
+- Checkpoints use format version 2. Version 1 checkpoints still load.
+- Plain `run` and `resume` throw `WorkflowInputRequired` when a node asks for
+  input instead of stopping the process.
+- `LanguageModelToolChoice.none` is deprecated in favor of `.disabled`. In an
+  optional context, `.none` means "not set", which leaves tools enabled.
+  Encoded values are unchanged.
+- The Apple adapters use `GenerationOptions(samplingMode:)` when built with
+  the 27 SDKs, which deprecate `init(sampling:)`. Builds with older SDKs are
+  unchanged.
+- Provider "context too long" rejections are now thrown as
+  `LanguageModelContextWindowExceeded` instead of an adapter `httpStatus`
+  error.
+
+### Compatibility
+
+- **Source-breaking:** a `switch` over a `@nonexhaustive` enum from outside
+  SwiftOrc must add `@unknown default`. After this release, new cases in those
+  enums produce a warning instead of breaking the build. The demo app needed
+  ten such lines.
+- Checkpoints written by this release cannot be read by 0.5.0 or earlier.
+- Code that uses `LanguageModelToolChoice.none` still compiles and behaves the
+  same, with a deprecation warning and a rename fix-it.
+- Existing requests are unaffected: `history` defaults to empty and `messages`
+  keeps its meaning.
+- Tool approvals keep waiting in memory unless an app opts into
+  `.durable`. `LanguageModelToolApprovalDecision` is now `Codable`, and
+  conversations saved without `pendingTurn` still load.
+
 ## 0.5.0 - 2026-10-23
 
 ### Fixed

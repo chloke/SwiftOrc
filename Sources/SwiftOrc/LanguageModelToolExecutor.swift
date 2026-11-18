@@ -1,5 +1,6 @@
 import Foundation
 
+@nonexhaustive
 public enum LanguageModelToolPolicyError: Error, Sendable, Equatable {
     case accessDenied(tool: String)
     case approvalHandlerMissing(tool: String)
@@ -16,12 +17,14 @@ public enum LanguageModelToolPolicyError: Error, Sendable, Equatable {
     }
 }
 
+@nonexhaustive
 public enum LanguageModelToolInvocationError: Error, Sendable, Equatable {
     case invalidArguments(tool: String, failure: WorkflowFailure)
     case outputEncodingFailed(tool: String, failure: WorkflowFailure)
 }
 
 /// Invalid tool registries rejected before model execution.
+@nonexhaustive
 public enum LanguageModelToolRegistryError: Error, Sendable, Equatable {
     case noTools
     case emptyToolName
@@ -188,10 +191,32 @@ package struct LanguageModelToolExecutor: Sendable {
         return policy.authorization(for: name, metadata: metadata)
     }
 
+    /// Whether running `call` needs an approval decision first.
+    package func requiresApproval(
+        _ call: LanguageModelToolCall,
+        authorization: LanguageModelToolAuthorization?
+    ) -> Bool {
+        guard let registration = registry.registration(named: call.name),
+            authorization != .denied
+        else { return false }
+        return registration.policy.approval == .always
+            || authorization == .userApproval
+    }
+
+    /// Whether the named tool may change state when it runs.
+    package func mayHaveSideEffects(_ name: String) -> Bool {
+        registry.metadata(for: name).map(
+            LanguageModelToolSideEffectTracker.mayHaveSideEffects
+        ) ?? true
+    }
+
+    /// Runs one call. When `decision` is set, it is used instead of asking
+    /// the approval handler, for approvals the application already gave.
     package func execute(
         _ call: LanguageModelToolCall,
         context: LanguageModelToolExecutionContext,
-        authorization: LanguageModelToolAuthorization? = nil
+        authorization: LanguageModelToolAuthorization? = nil,
+        decision recordedDecision: LanguageModelToolApprovalDecision? = nil
     ) async throws -> String {
         guard let registration = registry.registration(named: call.name) else {
             throw ToolCallingLanguageModelError.unknownTool
@@ -209,24 +234,29 @@ package struct LanguageModelToolExecutor: Sendable {
         if registration.policy.approval == .always
             || authorization == .userApproval
         {
-            await onEvent?(
-                .approvalRequested(
-                    round: context.round,
-                    callNumber: context.callNumber,
-                    tool: call.name
+            let decision: LanguageModelToolApprovalDecision
+            if let recordedDecision {
+                decision = recordedDecision
+            } else {
+                await onEvent?(
+                    .approvalRequested(
+                        round: context.round,
+                        callNumber: context.callNumber,
+                        tool: call.name
+                    )
                 )
-            )
-            guard let approvalHandler else {
-                throw
-                    LanguageModelToolPolicyError
-                    .approvalHandlerMissing(tool: call.name)
+                guard let approvalHandler else {
+                    throw
+                        LanguageModelToolPolicyError
+                        .approvalHandlerMissing(tool: call.name)
+                }
+                decision = await approvalHandler(
+                    LanguageModelToolApprovalRequest(
+                        call: call,
+                        provider: context.provider
+                    )
+                )
             }
-            let decision = await approvalHandler(
-                LanguageModelToolApprovalRequest(
-                    call: call,
-                    provider: context.provider
-                )
-            )
             await onEvent?(
                 .approvalResolved(
                     round: context.round,

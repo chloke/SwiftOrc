@@ -151,3 +151,56 @@ func contextResolvesStoredImagesIntoTransientModelInput() async throws {
             )
     )
 }
+
+@Test
+func fileProtectionMapsToDataProtectionClasses() {
+    #expect(WorkflowFileProtection.complete.writingOptions == .completeFileProtection)
+    #expect(
+        WorkflowFileProtection.completeUnlessOpen.writingOptions
+            == .completeFileProtectionUnlessOpen)
+    #expect(
+        WorkflowFileProtection.default.writingOptions
+            == .completeFileProtectionUntilFirstUserAuthentication)
+    #expect(WorkflowFileProtection.unprotected.writingOptions == .noFileProtection)
+}
+
+@Test
+func storesWriteAndReadWithEveryProtectionClass() async throws {
+    let protections: [WorkflowFileProtection] = [
+        .complete, .completeUnlessOpen, .completeUntilFirstUserAuthentication, .unprotected,
+    ]
+    for protection in protections {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let artifacts = try DirectoryWorkflowArtifactStore(
+            directoryURL: directory.appendingPathComponent("artifacts"),
+            fileProtection: protection
+        )
+        let artifact = try await artifacts.store(
+            Data([1, 2, 3]),
+            options: WorkflowArtifactWriteOptions(mediaType: "image/png")
+        )
+        #expect(try await artifacts.data(for: artifact) == Data([1, 2, 3]))
+
+        let checkpoints = JSONFileWorkflowCheckpointStore<Int>(
+            fileURL: directory.appendingPathComponent("checkpoint.json"),
+            fileProtection: protection
+        )
+        try await checkpoints.save(
+            WorkflowCheckpoint(
+                definitionID: "protected",
+                executionID: UUID(),
+                state: 7,
+                nextNode: "next",
+                attempt: 1,
+                steps: 0,
+                events: [],
+                recoveries: []
+            )
+        )
+        #expect(try await checkpoints.load()?.state == 7)
+        #expect(await checkpoints.fileProtection == protection)
+    }
+}

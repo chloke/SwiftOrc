@@ -1,13 +1,14 @@
 import Foundation
 
 /// Whether an application must approve a tool call before it executes.
+@nonexhaustive
 public enum LanguageModelToolApprovalRequirement: Sendable, Equatable {
     case never
     case always
 }
 
 /// The application-level result of reviewing a proposed tool call.
-public enum LanguageModelToolApprovalDecision: Sendable, Equatable {
+public enum LanguageModelToolApprovalDecision: Sendable, Equatable, Codable {
     case approved
     case denied
 }

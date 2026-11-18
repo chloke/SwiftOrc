@@ -156,6 +156,12 @@ private extension NodeResult {
             )
         case let .finish(state):
             return .finish(state)
+        case let .awaitInput(state, request, resumeAt):
+            return .awaitInput(
+                state,
+                request: request,
+                resumeAt: resumeAt.map { identifiers[$0] ?? $0 }
+            )
         }
     }
 
@@ -172,7 +178,7 @@ private extension NodeResult {
                 continuation: .next(target),
                 branches: branches
             )
-        case .next, .route, .retry, .fallback:
+        case .next, .route, .retry, .fallback, .awaitInput:
             return self
         }
     }

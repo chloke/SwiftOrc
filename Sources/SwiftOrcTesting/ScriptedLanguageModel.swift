@@ -9,6 +9,7 @@ public struct ScriptedLanguageModelStep: Sendable {
     private enum Outcome: Sendable {
         case response(LanguageModelResponse)
         case failure(WorkflowFailure)
+        case error(any Error)
     }
 
     private let outcome: Outcome
@@ -75,12 +76,41 @@ public struct ScriptedLanguageModelStep: Sendable {
         )
     }
 
+    /// Creates a step that throws `error` unchanged, for testing code that
+    /// reacts to specific error types.
+    public static func throwing(
+        _ error: any Error,
+        after delay: Duration = .zero
+    ) -> ScriptedLanguageModelStep {
+        ScriptedLanguageModelStep(outcome: .error(error), delay: delay)
+    }
+
+    /// Creates a step that rejects the request as too long, as a provider
+    /// does when the context window is exceeded. Conversations react by
+    /// applying their overflow strategy and retrying.
+    public static func contextWindowExceeded(
+        maximumTokens: Int? = nil,
+        requestedTokens: Int? = nil,
+        after delay: Duration = .zero
+    ) -> ScriptedLanguageModelStep {
+        throwing(
+            LanguageModelContextWindowExceeded(
+                provider: ScriptedLanguageModel.providerIdentifier,
+                maximumTokens: maximumTokens,
+                requestedTokens: requestedTokens
+            ),
+            after: delay
+        )
+    }
+
     fileprivate func resolve() throws -> LanguageModelResponse {
         switch outcome {
         case let .response(response):
             return response
         case let .failure(failure):
             throw failure
+        case let .error(error):
+            throw error
         }
     }
 }
@@ -100,6 +130,7 @@ public struct ScriptedLanguageModelSnapshot: Sendable {
 }
 
 /// Errors produced by ``ScriptedLanguageModel`` itself.
+@nonexhaustive
 public enum ScriptedLanguageModelError: Error, Sendable, Equatable,
     CustomStringConvertible
 {

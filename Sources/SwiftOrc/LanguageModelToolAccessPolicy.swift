@@ -45,6 +45,7 @@ public enum LanguageModelToolRiskLevel: Int, Sendable, Equatable, Comparable,
 }
 
 /// The kind of observable effect a tool may have outside model inference.
+@nonexhaustive
 public enum LanguageModelToolEffect: String, Sendable, Equatable, Hashable,
     Codable, CaseIterable
 {
@@ -75,6 +76,7 @@ public struct LanguageModelToolMetadata: Sendable, Equatable, Codable {
 }
 
 /// The authorization outcome for a tool matching an access rule.
+@nonexhaustive
 public enum LanguageModelToolAuthorization: String, Sendable, Equatable,
     Codable
 {
@@ -84,6 +86,7 @@ public enum LanguageModelToolAuthorization: String, Sendable, Equatable,
 }
 
 /// What the tool loop does when user approval is denied or unavailable.
+@nonexhaustive
 public enum LanguageModelToolDenialBehavior: String, Sendable, Equatable,
     Codable
 {

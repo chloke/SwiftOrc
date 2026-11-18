@@ -11,6 +11,7 @@ extension Workflow {
         recoveries initialRecoveries: [WorkflowRecovery],
         executionBudget: WorkflowExecutionBudget?,
         artifactStore: (any WorkflowArtifactStore)?,
+        inputResponse: WorkflowInputResponse? = nil,
         onCheckpoint: WorkflowCheckpointHandler<State>?,
         onEvent: WorkflowEventHandler?
     ) async throws -> WorkflowExecutionResult<State> {
@@ -21,6 +22,7 @@ extension Workflow {
             steps: initialSteps,
             events: initialEvents,
             recoveries: initialRecoveries,
+            inputResponse: inputResponse,
             shouldCreateCheckpoint: true
         )
         var invocationNodeExecutions = 0
@@ -45,6 +47,7 @@ extension Workflow {
                         cursor: &cursor,
                         executionID: executionID,
                         reason: reason,
+                        pendingInput: nil,
                         nodeExecutions: invocationNodeExecutions,
                         onCheckpoint: onCheckpoint,
                         onEvent: onEvent
@@ -89,7 +92,8 @@ extension Workflow {
                 nodeID: cursor.currentNodeID,
                 attempt: cursor.attempt,
                 step: cursor.steps,
-                artifactStore: artifactStore
+                artifactStore: artifactStore,
+                inputResponse: cursor.inputResponse
             )
             await cursor.record(
                 .nodeStarted(
@@ -133,13 +137,28 @@ extension Workflow {
                 )
             }
 
-            if let run = try await process(
+            switch try await process(
                 resolved.transition,
                 cursor: &cursor,
                 executionID: executionID,
                 onEvent: onEvent
             ) {
+            case .continued:
+                break
+            case let .finished(run):
                 return .completed(run)
+            case let .awaitingInput(request):
+                return .suspended(
+                    try await suspend(
+                        cursor: &cursor,
+                        executionID: executionID,
+                        reason: .awaitingInput(request),
+                        pendingInput: request,
+                        nodeExecutions: invocationNodeExecutions,
+                        onCheckpoint: onCheckpoint,
+                        onEvent: onEvent
+                    )
+                )
             }
         }
     }
@@ -198,6 +217,7 @@ extension Workflow {
         cursor: inout WorkflowExecutionCursor<State>,
         executionID: UUID,
         reason: WorkflowSuspensionReason,
+        pendingInput: WorkflowInputRequest?,
         nodeExecutions: Int,
         onCheckpoint: WorkflowCheckpointHandler<State>?,
         onEvent: WorkflowEventHandler?
@@ -220,7 +240,9 @@ extension Workflow {
             attempt: cursor.attempt,
             steps: cursor.steps,
             events: cursor.events,
-            recoveries: cursor.recoveries
+            recoveries: cursor.recoveries,
+            pendingInput: pendingInput,
+            inputResponse: cursor.inputResponse
         )
 
         if let onCheckpoint {
@@ -251,8 +273,9 @@ extension Workflow {
 
     func validate(_ checkpoint: WorkflowCheckpoint<State>) throws {
         guard
-            checkpoint.formatVersion
-                == WorkflowCheckpoint<State>.currentFormatVersion
+            WorkflowCheckpoint<State>.supportedFormatVersions.contains(
+                checkpoint.formatVersion
+            )
         else {
             throw WorkflowError.unsupportedCheckpointVersion(
                 checkpoint.formatVersion
@@ -300,7 +323,8 @@ extension Workflow {
                 attempt: cursor.attempt,
                 steps: cursor.steps,
                 events: cursor.events,
-                recoveries: cursor.recoveries
+                recoveries: cursor.recoveries,
+                inputResponse: cursor.inputResponse
             )
 
             do {
@@ -328,7 +352,7 @@ extension Workflow {
         cursor: inout WorkflowExecutionCursor<State>,
         executionID: UUID,
         onEvent: WorkflowEventHandler?
-    ) async throws -> WorkflowRun<State>? {
+    ) async throws -> WorkflowProcessOutcome<State> {
         let source = cursor.currentNodeID
 
         switch transition {
@@ -388,7 +412,7 @@ extension Workflow {
                     .nodeCompleted(node: source, transition: .finish),
                     onEvent: onEvent
                 )
-                return await cursor.finishedRun(
+                return await cursor.finishedOutcome(
                     state: state,
                     executionID: executionID,
                     finalNode: source,
@@ -463,16 +487,47 @@ extension Workflow {
                 .nodeCompleted(node: source, transition: .finish),
                 onEvent: onEvent
             )
-            return await cursor.finishedRun(
+            return await cursor.finishedOutcome(
                 state: state,
                 executionID: executionID,
                 finalNode: source,
                 onEvent: onEvent
             )
+
+        case let .awaitInput(state, request, resumeAt):
+            let target = resumeAt ?? source
+            await cursor.record(
+                .nodeCompleted(node: source, transition: .awaitInput(target)),
+                onEvent: onEvent
+            )
+            try await cursor.requireTarget(
+                target,
+                from: source,
+                nodes: nodes,
+                executionID: executionID,
+                onEvent: onEvent
+            )
+            await cursor.record(
+                .inputRequested(
+                    node: source,
+                    requestID: request.id,
+                    kind: request.kind,
+                    resumeAt: target
+                ),
+                onEvent: onEvent
+            )
+            cursor.advance(to: target, state: state)
+            return .awaitingInput(request)
         }
 
-        return nil
+        return .continued
     }
+}
+
+private enum WorkflowProcessOutcome<State: Sendable> {
+    case continued
+    case finished(WorkflowRun<State>)
+    case awaitingInput(WorkflowInputRequest)
 }
 
 private struct WorkflowExecutionCursor<State: Sendable> {
@@ -482,6 +537,8 @@ private struct WorkflowExecutionCursor<State: Sendable> {
     var steps: Int
     var events: [WorkflowEvent]
     var recoveries: [WorkflowRecovery]
+    /// An answer for the current node; cleared once the workflow moves on.
+    var inputResponse: WorkflowInputResponse?
     var shouldCreateCheckpoint: Bool
 
     mutating func record(
@@ -549,7 +606,24 @@ private struct WorkflowExecutionCursor<State: Sendable> {
         self.state = state
         currentNodeID = target
         attempt = 1
+        inputResponse = nil
         shouldCreateCheckpoint = true
+    }
+
+    mutating func finishedOutcome(
+        state: State,
+        executionID: UUID,
+        finalNode: NodeID,
+        onEvent: WorkflowEventHandler?
+    ) async -> WorkflowProcessOutcome<State> {
+        .finished(
+            await finishedRun(
+                state: state,
+                executionID: executionID,
+                finalNode: finalNode,
+                onEvent: onEvent
+            )
+        )
     }
 
     mutating func finishedRun(
@@ -586,6 +660,7 @@ private enum ResolvedWorkflowTransition<State: Sendable> {
     case retry(State, reason: WorkflowFailure?)
     case fallback(State, NodeID, failure: WorkflowFailure)
     case finish(State)
+    case awaitInput(State, WorkflowInputRequest, resumeAt: NodeID?)
 }
 
 private struct ResolvedWorkflowNodeResult<State: Sendable> {
@@ -624,5 +699,7 @@ private func resolveTransition<State: Sendable>(
         return .fallback(state, target, failure: failure)
     case let .finish(state):
         return .finish(state)
+    case let .awaitInput(state, request, resumeAt):
+        return .awaitInput(state, request, resumeAt: resumeAt)
     }
 }

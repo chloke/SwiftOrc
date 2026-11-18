@@ -216,6 +216,8 @@ private extension AppleFoundationModelAvailability.Reason {
             "the model is not ready"
         case .unknown:
             "unknown reason"
+        @unknown default:
+            "unknown reason"
         }
     }
 }

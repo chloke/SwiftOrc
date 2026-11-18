@@ -286,7 +286,7 @@ enum ChatToolChoice: Encodable {
         switch choice {
         case .automatic:
             self = .mode("auto")
-        case .none:
+        case .disabled:
             self = .mode("none")
         case .required:
             self = .mode("required")

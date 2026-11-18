@@ -19,6 +19,7 @@ public struct WorkflowArtifactID: RawRepresentable, Hashable, Sendable,
 }
 
 /// Where an artifact entered or was produced by an application workflow.
+@nonexhaustive
 public enum WorkflowArtifactSource: Sendable, Equatable, Codable {
     case userProvided
     case workflowNode(NodeID)
@@ -96,6 +97,7 @@ public struct WorkflowArtifactStoreLimits: Sendable, Equatable {
 }
 
 /// Predictable failures produced by the built-in artifact stores.
+@nonexhaustive
 public enum WorkflowArtifactStoreError: Error, Sendable, Equatable {
     case notConfigured
     case invalidLimits
@@ -208,12 +210,14 @@ public actor InMemoryWorkflowArtifactStore: WorkflowArtifactStore {
 public actor DirectoryWorkflowArtifactStore: WorkflowArtifactStore {
     public let directoryURL: URL
     public let limits: WorkflowArtifactStoreLimits
+    public let fileProtection: WorkflowFileProtection
 
     private var totalBytes: Int
 
     public init(
         directoryURL: URL,
-        limits: WorkflowArtifactStoreLimits = .default
+        limits: WorkflowArtifactStoreLimits = .default,
+        fileProtection: WorkflowFileProtection = .default
     ) throws {
         guard limits.maximumArtifactBytes > 0,
             limits.maximumTotalBytes >= limits.maximumArtifactBytes
@@ -222,6 +226,7 @@ public actor DirectoryWorkflowArtifactStore: WorkflowArtifactStore {
         }
         self.directoryURL = directoryURL
         self.limits = limits
+        self.fileProtection = fileProtection
 
         try FileManager.default.createDirectory(
             at: directoryURL,
@@ -267,7 +272,10 @@ public actor DirectoryWorkflowArtifactStore: WorkflowArtifactStore {
             source: options.source ?? .external,
             metadata: options.metadata
         )
-        try data.write(to: try fileURL(for: artifact.id), options: .atomic)
+        try data.write(
+            to: try fileURL(for: artifact.id),
+            options: [.atomic, fileProtection.writingOptions]
+        )
         totalBytes += data.count
         return artifact
     }

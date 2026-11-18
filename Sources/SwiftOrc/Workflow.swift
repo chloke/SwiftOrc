@@ -113,10 +113,7 @@ public struct Workflow<State: Sendable>: Sendable {
             onCheckpoint: onCheckpoint,
             onEvent: onEvent
         )
-        guard case let .completed(run) = result else {
-            preconditionFailure("An unbudgeted workflow cannot suspend.")
-        }
-        return run
+        return try Self.completedRun(result)
     }
 
     /// Starts a workflow and yields a continuation when this invocation's
@@ -160,6 +157,7 @@ public struct Workflow<State: Sendable>: Sendable {
         artifactStore: (any WorkflowArtifactStore)? = nil
     ) async throws -> WorkflowRun<State> {
         try validate(checkpoint)
+        try requireNoPendingInput(checkpoint)
 
         let resumed = WorkflowEvent.resumed(
             executionID: checkpoint.executionID,
@@ -179,13 +177,11 @@ public struct Workflow<State: Sendable>: Sendable {
             recoveries: checkpoint.recoveries,
             executionBudget: nil,
             artifactStore: artifactStore,
+            inputResponse: checkpoint.inputResponse,
             onCheckpoint: onCheckpoint,
             onEvent: onEvent
         )
-        guard case let .completed(run) = result else {
-            preconditionFailure("An unbudgeted workflow cannot suspend.")
-        }
-        return run
+        return try Self.completedRun(result)
     }
 
     /// Continues a workflow from a checkpoint and applies a fresh execution
@@ -198,6 +194,7 @@ public struct Workflow<State: Sendable>: Sendable {
         artifactStore: (any WorkflowArtifactStore)? = nil
     ) async throws -> WorkflowExecutionResult<State> {
         try validate(checkpoint)
+        try requireNoPendingInput(checkpoint)
         try validate(budget)
 
         let resumed = WorkflowEvent.resumed(
@@ -218,9 +215,125 @@ public struct Workflow<State: Sendable>: Sendable {
             recoveries: checkpoint.recoveries,
             executionBudget: budget,
             artifactStore: artifactStore,
+            inputResponse: checkpoint.inputResponse,
             onCheckpoint: onCheckpoint,
             onEvent: onEvent
         )
+    }
+
+    /// Continues a workflow that suspended because a node asked for input.
+    ///
+    /// The answer is accepted only for the request the checkpoint is waiting
+    /// on, so stale or duplicate answers are rejected. Write a typed answer
+    /// into state with `update`, pass a generic one as `value`, or both; the
+    /// next node finds `value` in ``WorkflowContext/inputResponse``.
+    ///
+    /// - Returns: `.completed` when the workflow finishes, or `.suspended` if
+    ///   it asks for input again or exhausts `budget`.
+    public func resume(
+        from checkpoint: WorkflowCheckpoint<State>,
+        answering requestID: UUID,
+        with value: JSONValue? = nil,
+        budget: WorkflowExecutionBudget = .unlimited,
+        onEvent: WorkflowEventHandler? = nil,
+        onCheckpoint: WorkflowCheckpointHandler<State>? = nil,
+        artifactStore: (any WorkflowArtifactStore)? = nil
+    ) async throws -> WorkflowExecutionResult<State> {
+        try await resume(
+            from: checkpoint,
+            answering: requestID,
+            with: value,
+            budget: budget,
+            onEvent: onEvent,
+            onCheckpoint: onCheckpoint,
+            artifactStore: artifactStore,
+            update: { _ in }
+        )
+    }
+
+    /// Continues a workflow that suspended for input, first writing the
+    /// answer into state with `update`:
+    ///
+    /// ```swift
+    /// try await workflow.resume(from: checkpoint, answering: request.id) { state in
+    ///     state.confirmed = true
+    /// }
+    /// ```
+    public func resume(
+        from checkpoint: WorkflowCheckpoint<State>,
+        answering requestID: UUID,
+        with value: JSONValue? = nil,
+        budget: WorkflowExecutionBudget = .unlimited,
+        onEvent: WorkflowEventHandler? = nil,
+        onCheckpoint: WorkflowCheckpointHandler<State>? = nil,
+        artifactStore: (any WorkflowArtifactStore)? = nil,
+        update: (inout State) async throws -> Void
+    ) async throws -> WorkflowExecutionResult<State> {
+        try validate(checkpoint)
+        try validate(budget)
+        guard let request = checkpoint.pendingInput else {
+            throw WorkflowError.checkpointNotAwaitingInput
+        }
+        guard request.id == requestID else {
+            throw WorkflowError.inputRequestMismatch(
+                expected: request.id,
+                actual: requestID
+            )
+        }
+        if let expiresAt = request.expiresAt, expiresAt < Date() {
+            throw WorkflowError.inputRequestExpired(request.id)
+        }
+
+        var state = checkpoint.state
+        try await update(&state)
+
+        let resumed = WorkflowEvent.resumed(
+            executionID: checkpoint.executionID,
+            node: checkpoint.nextNode,
+            attempt: checkpoint.attempt,
+            steps: checkpoint.steps
+        )
+        let received = WorkflowEvent.inputReceived(
+            node: checkpoint.nextNode,
+            requestID: request.id
+        )
+        await onEvent?(resumed)
+        await onEvent?(received)
+
+        return try await execute(
+            state: state,
+            executionID: checkpoint.executionID,
+            currentNodeID: checkpoint.nextNode,
+            attempt: checkpoint.attempt,
+            steps: checkpoint.steps,
+            events: checkpoint.events + [resumed, received],
+            recoveries: checkpoint.recoveries,
+            executionBudget: budget,
+            artifactStore: artifactStore,
+            inputResponse: WorkflowInputResponse(request: request, value: value),
+            onCheckpoint: onCheckpoint,
+            onEvent: onEvent
+        )
+    }
+
+    private func requireNoPendingInput(
+        _ checkpoint: WorkflowCheckpoint<State>
+    ) throws {
+        if let request = checkpoint.pendingInput {
+            throw WorkflowError.checkpointAwaitingInput(request.id)
+        }
+    }
+
+    /// Unbudgeted runs can only suspend when a node asks for input.
+    private static func completedRun(
+        _ result: WorkflowExecutionResult<State>
+    ) throws -> WorkflowRun<State> {
+        switch result {
+        case let .completed(run):
+            return run
+        case let .suspended(continuation):
+            throw WorkflowInputRequired(continuation: continuation)
+        }
     }
 
     private func validate(_ budget: WorkflowExecutionBudget) throws {

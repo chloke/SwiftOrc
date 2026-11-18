@@ -42,9 +42,23 @@ Do not embed a long-lived provider credential that must remain secret in a
 distributed application. Resolve credentials from Keychain at request time and
 prefer short-lived tokens or an application-owned gateway.
 
+Conversation history and pending input requests are part of checkpoints, so
+they can contain user messages and tool results. A turn waiting for a durable
+tool approval also stores the raw arguments of the pending tool calls; show
+them to the user, but keep them out of telemetry. Workflow events carry only
+the request identifier and kind. Text injected through a tool
+result or a model-written summary persists in history across turns; summaries
+are sent as untrusted user content rather than instructions, but treat history
+as untrusted input like any other model context.
+
 Built-in JSON checkpoints and directory artifacts are bounded but plaintext.
-Place them in an application-owned protected container, apply the platform's
-data-protection and backup policies, or implement a custom encrypted store.
+Both stores apply a data-protection class to the files they write
+(`fileProtection:`), which iOS, iPadOS, and visionOS enforce. The default,
+`.completeUntilFirstUserAuthentication`, keeps files readable for background
+work once the device has been unlocked; choose `.complete` when files are only
+needed while the app is in use. Place them in an application-owned container
+and apply the platform's backup policies, or implement a custom encrypted
+store when files must stay encrypted on every platform.
 
 ## Reporting
 

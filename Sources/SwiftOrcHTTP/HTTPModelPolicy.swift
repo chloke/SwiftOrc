@@ -2,6 +2,7 @@ import Foundation
 
 /// Which endpoint schemes remote adapters accept. Secure HTTPS is the default;
 /// cleartext HTTP can be enabled only for a loopback development server.
+@nonexhaustive
 public enum HTTPModelEndpointSecurityPolicy: Sendable, Equatable {
     case httpsOnly
     case allowInsecureLoopback
@@ -42,6 +43,7 @@ public struct HTTPModelRetryPolicy: Sendable, Equatable {
 
 /// A redacted diagnostic event. Prompt text, bodies, headers, endpoints, and
 /// credentials are intentionally excluded.
+@nonexhaustive
 public enum HTTPModelProviderEvent: Sendable, Equatable {
     case requestStarted(provider: String, attempt: Int)
     case retryScheduled(
@@ -58,6 +60,7 @@ public enum HTTPModelProviderEvent: Sendable, Equatable {
         retryable: Bool
     )
 
+    @nonexhaustive
     public enum RetryReason: Sendable, Equatable {
         case transport
         case statusCode(Int)

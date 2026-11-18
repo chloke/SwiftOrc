@@ -75,7 +75,7 @@ func explicitToolChoiceNoneDoesNotRequireToolCalling() {
                 parameters: .objectSchema(properties: [:], required: [])
             )
         ],
-        toolChoice: LanguageModelToolChoice.none
+        toolChoice: LanguageModelToolChoice.disabled
     )
 
     #expect(request.effectiveRequiredCapabilities == [.textInput])
@@ -237,4 +237,19 @@ func unspecifiedCapabilitiesPreserveAttemptAndFallbackBehavior() async throws {
 
     #expect(response.provider == "legacy")
     #expect(await calls.providers == ["unspecified"])
+}
+
+@Test
+func disabledToolChoiceKeepsTheEncodedNoneKey() throws {
+    let encoded = String(
+        decoding: try JSONEncoder().encode(LanguageModelToolChoice.disabled),
+        as: UTF8.self
+    )
+    #expect(encoded == #"{"none":{}}"#)
+
+    let decoded = try JSONDecoder().decode(
+        LanguageModelToolChoice.self,
+        from: Data(#"{"none":{}}"#.utf8)
+    )
+    #expect(decoded == .disabled)
 }

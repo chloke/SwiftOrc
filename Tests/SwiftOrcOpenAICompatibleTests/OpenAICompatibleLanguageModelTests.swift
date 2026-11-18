@@ -1125,3 +1125,63 @@ func defaultTransportsShareOneSession() {
 func defaultRetryPolicyRetriesOverloadedStatus() {
     #expect(HTTPModelRetryPolicy().retryableStatusCodes.contains(529))
 }
+
+@Test
+func chatCompletionsSendsHistoryBeforeThePrompt() async throws {
+    let transport = RecordingTransport([.response(successResponse())])
+    let model = try OpenAICompatibleLanguageModel(
+        providerIdentifier: "history",
+        endpoint: endpoint,
+        modelIdentifier: "model",
+        defaultInstructions: "Be brief.",
+        retryPolicy: .none,
+        transport: transport
+    )
+
+    _ = try await model.generate(
+        LanguageModelRequest(
+            prompt: "Now",
+            history: [.user("Earlier"), .assistant(content: "Reply", toolCalls: [])]
+        )
+    )
+
+    let body = try #require(await transport.requests.first?.httpBody)
+    let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+    let messages = try #require(json["messages"] as? [[String: Any]])
+    #expect(
+        messages.map { $0["role"] as? String } == ["developer", "user", "assistant", "user"])
+    #expect(messages.last?["content"] as? String == "Now")
+}
+
+@Test
+func chatCompletionsReportsContextWindowRejections() async throws {
+    let transport = RecordingTransport([
+        .response(
+            HTTPModelTransportResponse(
+                data: Data(
+                    #"{"error":{"code":"context_length_exceeded","type":"invalid_request_error","message":"This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens."}}"#
+                        .utf8
+                ),
+                statusCode: 400
+            )
+        )
+    ])
+    let model = try OpenAICompatibleLanguageModel(
+        providerIdentifier: "context",
+        endpoint: endpoint,
+        modelIdentifier: "model",
+        transport: transport
+    )
+
+    await #expect(
+        throws: LanguageModelContextWindowExceeded(
+            provider: "context",
+            maximumTokens: 8192,
+            requestedTokens: 9000
+        )
+    ) {
+        _ = try await model.generate(LanguageModelRequest(prompt: "Hi"))
+    }
+    // A context rejection is not retried by the HTTP retry policy.
+    #expect(await transport.requests.count == 1)
+}

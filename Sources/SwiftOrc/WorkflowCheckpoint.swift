@@ -21,7 +21,10 @@ public struct WorkflowDefinitionID: RawRepresentable, Hashable, Sendable,
 
 /// A durable snapshot captured between workflow node executions.
 public struct WorkflowCheckpoint<State: Sendable>: Sendable {
-    public static var currentFormatVersion: Int { 1 }
+    /// Version 2 adds input requests and answers. Version 1 checkpoints are
+    /// still accepted.
+    public static var currentFormatVersion: Int { 2 }
+    static var supportedFormatVersions: ClosedRange<Int> { 1...2 }
 
     public let formatVersion: Int
     public let definitionID: WorkflowDefinitionID
@@ -32,6 +35,10 @@ public struct WorkflowCheckpoint<State: Sendable>: Sendable {
     public let steps: Int
     public let events: [WorkflowEvent]
     public let recoveries: [WorkflowRecovery]
+    /// The question the workflow is waiting on, if it suspended for input.
+    public let pendingInput: WorkflowInputRequest?
+    /// An answer not yet consumed by ``nextNode``.
+    public let inputResponse: WorkflowInputResponse?
     public let createdAt: Date
 
     public init(
@@ -44,6 +51,8 @@ public struct WorkflowCheckpoint<State: Sendable>: Sendable {
         steps: Int,
         events: [WorkflowEvent],
         recoveries: [WorkflowRecovery],
+        pendingInput: WorkflowInputRequest? = nil,
+        inputResponse: WorkflowInputResponse? = nil,
         createdAt: Date = Date()
     ) {
         self.formatVersion = formatVersion
@@ -55,6 +64,8 @@ public struct WorkflowCheckpoint<State: Sendable>: Sendable {
         self.steps = steps
         self.events = events
         self.recoveries = recoveries
+        self.pendingInput = pendingInput
+        self.inputResponse = inputResponse
         self.createdAt = createdAt
     }
 }
@@ -71,16 +82,19 @@ public typealias WorkflowCheckpointHandler<State: Sendable> =
 public actor JSONFileWorkflowCheckpointStore<State: Codable & Sendable> {
     public let fileURL: URL
     public let maximumBytes: Int
+    public let fileProtection: WorkflowFileProtection
 
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
     public init(
         fileURL: URL,
-        maximumBytes: Int = 8 * 1_024 * 1_024
+        maximumBytes: Int = 8 * 1_024 * 1_024,
+        fileProtection: WorkflowFileProtection = .default
     ) {
         self.fileURL = fileURL
         self.maximumBytes = maximumBytes
+        self.fileProtection = fileProtection
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -108,7 +122,10 @@ public actor JSONFileWorkflowCheckpointStore<State: Codable & Sendable> {
                 maximum: maximumBytes
             )
         }
-        try data.write(to: fileURL, options: .atomic)
+        try data.write(
+            to: fileURL,
+            options: [.atomic, fileProtection.writingOptions]
+        )
     }
 
     public func load() throws -> WorkflowCheckpoint<State>? {
@@ -135,6 +152,12 @@ public actor JSONFileWorkflowCheckpointStore<State: Codable & Sendable> {
         )
     }
 
+    /// A handler to pass as `onCheckpoint`, so every checkpoint, including
+    /// one saved while waiting for input, is written automatically.
+    public nonisolated var checkpointHandler: WorkflowCheckpointHandler<State> {
+        { checkpoint in try await self.save(checkpoint) }
+    }
+
     public func remove() throws {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return
@@ -143,6 +166,7 @@ public actor JSONFileWorkflowCheckpointStore<State: Codable & Sendable> {
     }
 }
 
+@nonexhaustive
 public enum JSONFileWorkflowCheckpointStoreError: Error, Sendable, Equatable {
     case invalidMaximumBytes
     case checkpointTooLarge(maximum: Int)

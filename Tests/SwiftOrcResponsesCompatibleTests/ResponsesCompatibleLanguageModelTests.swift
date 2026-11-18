@@ -160,3 +160,53 @@ func streamsResponsesTextDeltas() async throws {
     #expect(result.content == "Hello")
     #expect(result.finishReason == .stop)
 }
+
+@Test
+func responsesSendsHistoryBeforeThePrompt() async throws {
+    let transport = RecordingTransport(response: response())
+    let model = try ResponsesCompatibleLanguageModel(
+        providerIdentifier: "openai-responses",
+        endpoint: endpoint,
+        modelIdentifier: "model",
+        retryPolicy: .none,
+        transport: transport
+    )
+
+    _ = try await model.generate(
+        LanguageModelRequest(
+            prompt: "Now",
+            history: [.user("Earlier"), .assistant(content: "Reply", toolCalls: [])]
+        )
+    )
+
+    let body = try #require(await transport.requests.first?.httpBody)
+    let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+    let input = try #require(json["input"] as? [[String: Any]])
+    #expect(input.map { $0["role"] as? String } == ["user", "assistant", "user"])
+}
+
+@Test
+func responsesReportsContextWindowRejections() async throws {
+    let transport = RecordingTransport(
+        response: HTTPModelTransportResponse(
+            data: Data(
+                #"{"error":{"code":"context_length_exceeded","message":"Your input exceeds the context window of this model."}}"#
+                    .utf8
+            ),
+            statusCode: 400
+        )
+    )
+    let model = try ResponsesCompatibleLanguageModel(
+        providerIdentifier: "openai-responses",
+        endpoint: endpoint,
+        modelIdentifier: "model",
+        retryPolicy: .none,
+        transport: transport
+    )
+
+    await #expect(
+        throws: LanguageModelContextWindowExceeded(provider: "openai-responses")
+    ) {
+        _ = try await model.generate(LanguageModelRequest(prompt: "Hi"))
+    }
+}
